@@ -5,7 +5,8 @@
 const DB_NAME = 'AuraMusicDB';
 const SONGS_STORE = 'songs';
 const METADATA_STORE = 'metadata';
-const DB_VERSION = 2; // Nâng cấp version để thêm store mới
+const SETTINGS_STORE = 'settings';
+const DB_VERSION = 3; 
 
 export const initDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
@@ -17,6 +18,9 @@ export const initDB = (): Promise<IDBDatabase> => {
       }
       if (!db.objectStoreNames.contains(METADATA_STORE)) {
         db.createObjectStore(METADATA_STORE);
+      }
+      if (!db.objectStoreNames.contains(SETTINGS_STORE)) {
+        db.createObjectStore(SETTINGS_STORE);
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -62,10 +66,8 @@ export const saveLibraryMetadata = async (songs: any[]): Promise<void> => {
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(METADATA_STORE, 'readwrite');
     const store = transaction.objectStore(METADATA_STORE);
-    // Clear old metadata and save new
     store.clear().onsuccess = () => {
       songs.forEach(song => {
-        // Don't save transient online songs to permanent storage
         if (!song.id.startsWith('online')) {
           store.put(song, song.id);
         }
@@ -83,6 +85,28 @@ export const getLibraryMetadata = async (): Promise<any[]> => {
     const store = transaction.objectStore(METADATA_STORE);
     const request = store.getAll();
     request.onsuccess = () => resolve(request.result || []);
+    request.onerror = () => reject(request.error);
+  });
+};
+
+export const isLibraryInitialized = async (): Promise<boolean> => {
+  const db = await initDB();
+  return new Promise((resolve) => {
+    const transaction = db.transaction(SETTINGS_STORE, 'readonly');
+    const store = transaction.objectStore(SETTINGS_STORE);
+    const request = store.get('initialized');
+    request.onsuccess = () => resolve(!!request.result);
+    request.onerror = () => resolve(false);
+  });
+};
+
+export const markLibraryInitialized = async (): Promise<void> => {
+  const db = await initDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(SETTINGS_STORE, 'readwrite');
+    const store = transaction.objectStore(SETTINGS_STORE);
+    const request = store.put(true, 'initialized');
+    request.onsuccess = () => resolve();
     request.onerror = () => reject(request.error);
   });
 };

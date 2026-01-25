@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { Recommendation, Song } from "../types";
+import { Song } from "../types";
 
 // Always create a new instance right before use to ensure the latest API key from the environment/dialog is used.
 const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -40,7 +40,7 @@ export const searchMusicOnline = async (query: string): Promise<any> => {
     const ai = getAI();
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `Quick search music: "${query}". Return a JSON array of 5 tracks with keys: title, artist, album, coverUrl.`,
+      contents: `Search for tracks matching "${query}" on the web. Return a JSON array of 5 tracks. Each track MUST have: title, artist, album, coverUrl. Be brief.`,
       config: {
         tools: [{ googleSearch: {} }],
         responseMimeType: "application/json",
@@ -75,7 +75,7 @@ export const getMoodRecommendation = async (mood: string, favorites?: string[], 
     
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `Mood: "${mood}".${context}\nRecommend music and describe the vibe.`,
+      contents: `Mood: "${mood}".${context}\nRecommend 5 actual music tracks and describe the vibe.`,
       config: {
         tools: [{ googleSearch: {} }],
         responseMimeType: "application/json",
@@ -118,7 +118,7 @@ export const getSongStory = async (title: string, artist: string): Promise<any> 
     const ai = getAI();
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `Tell a 2-sentence story about song "${title}" by "${artist}" in Vietnamese.`,
+      contents: `Tell a 2-sentence story about song "${title}" by "${artist}" in Vietnamese. Briefly mention its impact or style.`,
       config: { tools: [{ googleSearch: {} }] }
     });
     return response.text || "Âm nhạc kể câu chuyện của riêng nó.";
@@ -132,7 +132,7 @@ export const getSongInsight = async (title: string, artist: string): Promise<any
     const ai = getAI();
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `One-line insight for "${title}" - "${artist}".`,
+      contents: `Short one-line trivia or insight for "${title}" - "${artist}".`,
     });
     return response.text || "";
   } catch (error) {
