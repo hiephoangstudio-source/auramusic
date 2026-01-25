@@ -3,8 +3,17 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Aura AI Music Player</title>
+  
+  <!-- PWA & iOS Support -->
+  <link rel="manifest" href="/manifest.json">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Aura">
+  <link rel="apple-touch-icon" href="https://picsum.photos/id/123/180/180">
+  <meta name="theme-color" content="#050505">
+
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Syncopate:wght@400;700&display=swap" rel="stylesheet">
   <style>
@@ -14,6 +23,8 @@
       color: #ffffff;
       overflow-x: hidden;
       margin: 0;
+      /* Ngăn chặn kéo để tải lại trên mobile */
+      overscroll-behavior-y: contain;
     }
     .font-syncopate {
       font-family: 'Syncopate', sans-serif;
@@ -40,6 +51,15 @@
       min-height: 100vh;
       display: flex;
       flex-direction: column;
+    }
+    /* Tối ưu cho màn hình tai thỏ/dynamic island */
+    @supports (padding-top: env(safe-area-inset-top)) {
+      header {
+        padding-top: calc(1rem + env(safe-area-inset-top));
+      }
+      .pb-safe {
+        padding-bottom: env(safe-area-inset-bottom);
+      }
     }
   </style>
 <script type="importmap">

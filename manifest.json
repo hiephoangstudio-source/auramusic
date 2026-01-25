@@ -1,0 +1,23 @@
+
+{
+  "name": "Aura AI Music",
+  "short_name": "Aura",
+  "description": "Futuristic AI Music Player",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#050505",
+  "theme_color": "#6366f1",
+  "icons": [
+    {
+      "src": "https://picsum.photos/id/123/192/192",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://picsum.photos/id/123/512/512",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
