@@ -42,7 +42,6 @@ const App: React.FC = () => {
   
   const audioRef = useRef<HTMLAudioElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const importFileRef = useRef<HTMLInputElement>(null);
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
 
@@ -245,7 +244,7 @@ const App: React.FC = () => {
                       <div className="p-2 bg-indigo-500/20 rounded-lg text-indigo-400 shrink-0"><Share size={16}/></div>
                       <div>
                         <p className="text-[10px] font-black uppercase text-white/80 mb-1">Cài app trên iPhone</p>
-                        <p className="text-[9px] text-white/40 leading-relaxed font-medium">Bấm <b>Chia sẻ</b> -> <b>Thêm vào MH chính</b>. Aura sẽ chạy như app thật!</p>
+                        <p className="text-[9px] text-white/40 leading-relaxed font-medium">Bấm <b>Chia sẻ</b> {"\u2192"} <b>Thêm vào MH chính</b>. Aura sẽ chạy như app thật!</p>
                       </div>
                    </div>
                    <div className="p-4 bg-white/5 rounded-2xl flex gap-4 items-start border border-white/5">
