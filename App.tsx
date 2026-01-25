@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { 
-  Play, Pause, SkipBack, SkipForward, Search, Waves, List, RefreshCw, Upload, Trash2, Globe, ExternalLink, Sparkles, X, Loader2, AlertCircle, Key, Music2, Download, Copy, Check, Info, FileJson, Share, PlusCircle
+  Play, Pause, SkipBack, SkipForward, Search, Waves, List, RefreshCw, Upload, Trash2, Globe, ExternalLink, Sparkles, X, Loader2, AlertCircle, Key, Music2, Download, Copy, Check, Info, FileJson, Share, PlusCircle, HelpCircle
 } from 'lucide-react';
 import { MOCK_PLAYLIST } from './constants';
 import { Song, PlayerState } from './types';
@@ -36,8 +36,6 @@ const App: React.FC = () => {
   const [isStoryLoading, setIsStoryLoading] = useState(false);
   const [globalError, setGlobalError] = useState<{code: string, message?: string} | null>(null);
   const [showSyncModal, setShowSyncModal] = useState(false);
-  const [generatedSyncCode, setGeneratedSyncCode] = useState<string | null>(null);
-  const [copySuccess, setCopySuccess] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -216,7 +214,7 @@ const App: React.FC = () => {
     setLibrary(nextLib);
     await syncStorage(nextLib);
     setIsUploading(false);
-    if (files.length > 0) alert(`Đã thêm ${files.length} bài hát vào thư viện Aura!`);
+    if (files.length > 0) alert(`Đã nạp ${files.length} bài hát vào Aura!`);
   };
 
   return (
@@ -229,29 +227,40 @@ const App: React.FC = () => {
         />
       )}
 
-      {/* Sync & Help Modal */}
+      {/* Sync & Comprehensive Help Modal */}
       {showSyncModal && (
         <div className="absolute inset-0 z-[110] bg-black/80 backdrop-blur-xl flex items-center justify-center p-4 sm:p-6 animate-in fade-in duration-300">
            <div className="glass max-w-lg w-full p-8 rounded-[3rem] border-indigo-500/20 flex flex-col max-h-[90vh] overflow-y-auto scrollbar-hide">
               <div className="w-14 h-14 bg-indigo-500/10 rounded-full flex items-center justify-center mx-auto text-indigo-400 mb-6 shrink-0">
-                <RefreshCw size={28} />
+                <HelpCircle size={28} />
               </div>
               
               <div className="text-center mb-8 shrink-0">
-                <h3 className="text-xl font-black uppercase tracking-widest mb-2">Đồng bộ & Cài đặt</h3>
+                <h3 className="text-xl font-black uppercase tracking-widest mb-2 text-indigo-400">Hướng dẫn Aura</h3>
                 <div className="flex flex-col gap-4 mt-6 text-left">
-                   <div className="p-4 bg-indigo-500/5 rounded-2xl flex gap-4 items-start border border-indigo-500/10">
+                   <div className="p-4 bg-white/5 rounded-2xl flex gap-4 items-start border border-white/5">
                       <div className="p-2 bg-indigo-500/20 rounded-lg text-indigo-400 shrink-0"><Share size={16}/></div>
                       <div>
-                        <p className="text-[10px] font-black uppercase text-white/80 mb-1">Cài app trên iPhone</p>
-                        <p className="text-[9px] text-white/40 leading-relaxed font-medium">Bấm <b>Chia sẻ</b> {"\u2192"} <b>Thêm vào MH chính</b>. Aura sẽ chạy như app thật!</p>
+                        <p className="text-[10px] font-black uppercase text-white/80 mb-1">Cài app trên iPhone (iOS)</p>
+                        <p className="text-[9px] text-white/40 leading-relaxed font-medium">
+                          Mở Safari {"\u2192"} Bấm <b>Chia sẻ</b> {"\u2192"} <b>Thêm vào MH chính</b>. App sẽ chạy mượt hơn và có thể nghe nhạc khi tắt màn hình.
+                        </p>
+                      </div>
+                   </div>
+                   <div className="p-4 bg-indigo-500/5 rounded-2xl flex gap-4 items-start border border-indigo-500/10">
+                      <div className="p-2 bg-indigo-400/20 rounded-lg text-indigo-400 shrink-0"><PlusCircle size={16}/></div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase text-white/80 mb-1">Cách nạp nhạc từ điện thoại</p>
+                        <p className="text-[9px] text-white/40 leading-relaxed font-medium">
+                          Apple chặn quét tự động. Hãy bấm nút <b>(+)</b> {"\u2192"} chọn <b>Tệp (Files)</b> {"\u2192"} chọn các bài nhạc trong máy. Aura sẽ lưu chúng vĩnh viễn trong bộ nhớ App.
+                        </p>
                       </div>
                    </div>
                    <div className="p-4 bg-white/5 rounded-2xl flex gap-4 items-start border border-white/5">
-                      <div className="p-2 bg-purple-500/20 rounded-lg text-purple-400 shrink-0"><PlusCircle size={16}/></div>
+                      <div className="p-2 bg-purple-500/20 rounded-lg text-purple-400 shrink-0"><Globe size={16}/></div>
                       <div>
-                        <p className="text-[10px] font-black uppercase text-white/80 mb-1">Tự động đọc nhạc?</p>
-                        <p className="text-[9px] text-white/40 leading-relaxed font-medium">Do bảo mật iPhone, bạn hãy bấm nút <b>Upload</b> và chọn <b>nhiều bài cùng lúc</b>. Aura sẽ lưu chúng mãi mãi trong máy bạn.</p>
+                        <p className="text-[10px] font-black uppercase text-white/80 mb-1">Tìm nhạc trên Web</p>
+                        <p className="text-[9px] text-white/40 leading-relaxed font-medium">Dùng thanh tìm kiếm hoặc AI DJ để Aura tự "lùng sục" bài hát trên internet cho bạn.</p>
                       </div>
                    </div>
                 </div>
@@ -263,14 +272,14 @@ const App: React.FC = () => {
                   className="py-5 bg-indigo-500 hover:bg-indigo-600 rounded-2xl flex flex-col items-center gap-3 transition-all shadow-lg shadow-indigo-500/20"
                 >
                   <PlusCircle className="text-white" />
-                  <span className="text-[9px] text-white font-black uppercase tracking-widest">Quét nhạc máy</span>
+                  <span className="text-[9px] text-white font-black uppercase tracking-widest">Nạp nhạc máy</span>
                 </button>
                 <button 
                   onClick={() => setShowSyncModal(false)}
                   className="py-5 bg-white/5 hover:bg-white/10 rounded-2xl flex flex-col items-center gap-3 transition-all"
                 >
                   <RefreshCw className="text-white/40" />
-                  <span className="text-[9px] text-white/40 font-black uppercase tracking-widest">Đồng bộ Web</span>
+                  <span className="text-[9px] text-white/40 font-black uppercase tracking-widest">Đồng bộ</span>
                 </button>
               </div>
 
@@ -284,29 +293,12 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Global Quota Error */}
-      {globalError && (globalError.code === 'QUOTA_EXCEEDED' || globalError.code === 'ENTITY_NOT_FOUND') && (
-        <div className="absolute inset-0 z-[100] bg-black/60 backdrop-blur-md flex items-center justify-center p-6">
-           <div className="glass max-w-md w-full p-10 rounded-[3rem] border-indigo-500/20 text-center space-y-6">
-              <div className="w-20 h-20 bg-indigo-500/10 rounded-full flex items-center justify-center mx-auto text-indigo-400">
-                <AlertCircle size={40} />
-              </div>
-              <h3 className="text-xl font-black uppercase tracking-widest">Hết hạn mức AI</h3>
-              <p className="text-sm text-white/60">Sử dụng API Key cá nhân để tiếp tục trải nghiệm AI DJ và Web Search.</p>
-              <button onClick={() => (window as any).aistudio?.openSelectKey()} className="w-full py-4 bg-indigo-500 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] transition-all">
-                Sử dụng API Key cá nhân
-              </button>
-              <button onClick={() => setGlobalError(null)} className="text-[9px] text-white/20 uppercase font-bold tracking-widest">Đóng</button>
-           </div>
-        </div>
-      )}
-
       {/* Uploading Overlay */}
       {isUploading && (
-        <div className="absolute inset-0 z-[120] bg-black/80 flex items-center justify-center">
+        <div className="absolute inset-0 z-[120] bg-black/80 backdrop-blur-sm flex items-center justify-center">
           <div className="text-center space-y-4">
             <Loader2 className="animate-spin text-indigo-500 mx-auto" size={48} />
-            <p className="text-xs font-black uppercase tracking-widest animate-pulse">Đang nạp nhạc vào Aura...</p>
+            <p className="text-xs font-black uppercase tracking-widest animate-pulse">Aura đang nạp nhạc vào bộ nhớ...</p>
           </div>
         </div>
       )}
@@ -341,7 +333,7 @@ const App: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2 sm:gap-4">
-           <button onClick={() => setShowSyncModal(true)} className="p-2 text-white/40 hover:text-white" title="Settings"><RefreshCw size={20} /></button>
+           <button onClick={() => setShowSyncModal(true)} className="p-2 text-white/40 hover:text-white" title="Trợ giúp"><HelpCircle size={22} /></button>
            <button onClick={() => fileInputRef.current?.click()} className="p-2 text-indigo-400 hover:text-white bg-indigo-500/10 rounded-xl" title="Thêm nhạc máy"><PlusCircle size={20} /></button>
            <input type="file" ref={fileInputRef} className="hidden" accept="audio/*" multiple onChange={handleFileUpload} />
         </div>
@@ -439,7 +431,7 @@ const App: React.FC = () => {
                <div className="flex flex-col items-center justify-center h-full opacity-20 text-center py-20">
                  <div className="p-8 sm:p-10 rounded-full border border-white/5 bg-white/5 mb-6"><Music2 size={60} strokeWidth={1} /></div>
                  <h2 className="text-lg font-black uppercase tracking-widest">Aura Assistant</h2>
-                 <p className="text-[10px] font-bold opacity-50 uppercase tracking-widest">Chọn nhạc hoặc tải lên để bắt đầu</p>
+                 <p className="text-[10px] font-bold opacity-50 uppercase tracking-widest">Bấm (+) để nạp nhạc hoặc dùng AI DJ</p>
                </div>
              )}
           </div>
