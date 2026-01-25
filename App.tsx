@@ -5,7 +5,7 @@ import {
   Repeat, Shuffle, Search, Heart, ListMusic, Mic2,
   Music2, Repeat1, Star, Radio, Waves, Square, 
   Circle as CircleIcon, Palette, Clock, List, 
-  MonitorPlay, X, BookOpen, RefreshCw, Filter, SortAsc, SortDesc, Upload, Music, Menu, ChevronLeft, ChevronRight
+  MonitorPlay, X, BookOpen, RefreshCw, Filter, SortAsc, SortDesc, Upload, Music, Menu, ChevronLeft, ChevronRight, Trash2, RotateCcw
 } from 'lucide-react';
 import { MOCK_PLAYLIST } from './constants';
 import { Song, PlayerState, Playlist, RepeatMode, VisualizerType, ThemeMode, ViewMode, VisualizerTheme } from './types';
@@ -14,11 +14,12 @@ import AIDJ from './components/AIDJ';
 import Lyrics from './components/Lyrics';
 import PlaylistManager from './components/PlaylistManager';
 import { getSongInsight, getSongStory } from './services/geminiService';
+import { saveSongBlob, getSongBlob, deleteSongBlob } from './services/dbService';
 
-const PLAYER_STATE_KEY = 'aura_player_state_v11';
-const RATINGS_KEY = 'aura_ratings_v11';
-const FAVORITES_KEY = 'aura_favorites_v11';
-const PLAYLISTS_KEY = 'aura_playlists_v11';
+const PLAYER_STATE_KEY = 'aura_player_state_v12';
+const FAVORITES_KEY = 'aura_favorites_v12';
+const PLAYLISTS_KEY = 'aura_playlists_v12';
+const LIBRARY_METADATA_KEY = 'aura_library_metadata_v12';
 
 const App: React.FC = () => {
   const [playerState, setPlayerState] = useState<PlayerState>(() => {
@@ -47,7 +48,8 @@ const App: React.FC = () => {
     };
   });
 
-  const [userSongs, setUserSongs] = useState<Song[]>([]);
+  const [library, setLibrary] = useState<Song[]>([]);
+  const [isLibraryLoading, setIsLibraryLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<'ai' | 'lyrics' | 'story'>('ai');
   const [showLibrary, setShowLibrary] = useState(true);
@@ -73,19 +75,57 @@ const App: React.FC = () => {
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
 
+  // Load Library on Mount
+  useEffect(() => {
+    const loadLibrary = async () => {
+      setIsLibraryLoading(true);
+      const savedMetadata = localStorage.getItem(LIBRARY_METADATA_KEY);
+      
+      if (!savedMetadata) {
+        // Lần đầu chạy app, dùng mock playlist
+        setLibrary(MOCK_PLAYLIST);
+      } else {
+        const metadata: Song[] = JSON.parse(savedMetadata);
+        const loadedSongs: Song[] = [];
+        
+        for (const song of metadata) {
+          if (song.id.startsWith('user')) {
+            const blob = await getSongBlob(song.id);
+            if (blob) {
+              loadedSongs.push({ ...song, audioUrl: URL.createObjectURL(blob) });
+            }
+          } else {
+            // Nhạc hệ thống (URL online)
+            loadedSongs.push(song);
+          }
+        }
+        setLibrary(loadedSongs);
+      }
+      setIsLibraryLoading(false);
+    };
+    loadLibrary();
+  }, []);
+
+  // Sync Metadata to LocalStorage
+  useEffect(() => {
+    if (!isLibraryLoading) {
+      const metadata = library.map(({ audioUrl, ...rest }) => rest);
+      localStorage.setItem(LIBRARY_METADATA_KEY, JSON.stringify(metadata));
+    }
+  }, [library, isLibraryLoading]);
+
   const fullLibrary = useMemo(() => {
-    const combined = [...MOCK_PLAYLIST, ...userSongs];
-    if (!searchQuery) return combined;
-    return combined.filter(s => 
+    if (!searchQuery) return library;
+    return library.filter(s => 
       s.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
       s.artist.toLowerCase().includes(searchQuery.toLowerCase())
     );
-  }, [userSongs, searchQuery]);
+  }, [library, searchQuery]);
 
   const currentSong = useMemo(() => {
-    // Đảm bảo index luôn hợp lệ sau khi library thay đổi
     const idx = playerState.currentSongIndex;
-    return fullLibrary[idx] || fullLibrary[0] || MOCK_PLAYLIST[0];
+    if (fullLibrary.length === 0) return null;
+    return fullLibrary[idx] || fullLibrary[0];
   }, [playerState.currentSongIndex, fullLibrary]);
 
   useEffect(() => { localStorage.setItem(FAVORITES_KEY, JSON.stringify(favorites)); }, [favorites]);
@@ -116,7 +156,7 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (!audioRef.current) return;
+    if (!audioRef.current || !currentSong) return;
     audioRef.current.volume = playerState.volume;
     if (playerState.isPlaying) {
       initAudioContext();
@@ -124,9 +164,10 @@ const App: React.FC = () => {
     } else {
       audioRef.current.pause();
     }
-  }, [playerState.isPlaying, currentSong.audioUrl, initAudioContext]);
+  }, [playerState.isPlaying, currentSong?.audioUrl, initAudioContext]);
 
   const handleNext = useCallback(() => {
+    if (fullLibrary.length === 0) return;
     setPlayerState(s => {
       let nextIndex = s.currentSongIndex + 1;
       if (s.repeatMode === 'one') return { ...s, currentTime: 0, isPlaying: true };
@@ -140,6 +181,7 @@ const App: React.FC = () => {
   }, [fullLibrary.length]);
 
   const handlePrev = useCallback(() => {
+    if (fullLibrary.length === 0) return;
     setPlayerState(s => {
       let prevIndex = s.currentSongIndex - 1;
       if (prevIndex < 0) prevIndex = fullLibrary.length - 1;
@@ -147,32 +189,55 @@ const App: React.FC = () => {
     });
   }, [fullLibrary.length]);
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
     
-    const newSongs: Song[] = Array.from(files).map((file, idx) => {
-      const url = URL.createObjectURL(file);
-      return {
-        id: `user-${Date.now()}-${idx}`,
+    const newSongs: Song[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const id = `user-${Date.now()}-${i}`;
+      await saveSongBlob(id, file); // Lưu vào IndexedDB
+      
+      newSongs.push({
+        id,
         title: file.name.replace(/\.[^/.]+$/, ""),
         artist: "Nhạc của tôi",
-        album: "Local Storage",
+        album: "Thư viện cá nhân",
         coverUrl: `https://picsum.photos/seed/${Math.random()}/400/400`,
-        audioUrl: url,
+        audioUrl: URL.createObjectURL(file),
         duration: 0,
-        color: "#" + Math.floor(Math.random()*16777215).toString(16)
-      };
-    });
+        color: "#6366f1"
+      });
+    }
 
-    const startIdx = fullLibrary.length;
-    setUserSongs(prev => [...prev, ...newSongs]);
-    // Phát bài đầu tiên trong số các bài vừa tải lên
+    const startIdx = library.length;
+    setLibrary(prev => [...prev, ...newSongs]);
     setPlayerState(s => ({ ...s, currentSongIndex: startIdx, isPlaying: true, currentTime: 0 }));
   };
 
   const handlePlayByIndex = (index: number) => {
     setPlayerState(s => ({ ...s, currentSongIndex: index, isPlaying: true, currentTime: 0 }));
+  };
+
+  const handleDeleteSong = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (id.startsWith('user')) {
+      await deleteSongBlob(id);
+    }
+    const newLibrary = library.filter(s => s.id !== id);
+    setLibrary(newLibrary);
+    
+    // Nếu đang phát bài bị xóa, nhảy sang bài khác
+    if (currentSong?.id === id) {
+      handleNext();
+    }
+  };
+
+  const handleResetLibrary = () => {
+    if (window.confirm("Bạn có muốn khôi phục danh sách nhạc mặc định không? Nhạc tải lên sẽ bị xóa khỏi danh sách hiển thị nhưng vẫn nằm trong bộ nhớ máy.")) {
+      setLibrary(MOCK_PLAYLIST);
+    }
   };
 
   useEffect(() => {
@@ -184,7 +249,7 @@ const App: React.FC = () => {
         getSongStory(currentSong.title, currentSong.artist).then(s => { setSongStory(s); setIsStoryLoading(false); });
       }
     }
-  }, [currentSong.id, activeTab]);
+  }, [currentSong?.id, activeTab]);
 
   const formatTime = (time: number) => {
     const mins = Math.floor(time / 60);
@@ -194,18 +259,20 @@ const App: React.FC = () => {
 
   return (
     <div className={`h-screen transition-colors duration-700 flex flex-col ${playerState.theme === 'dark' ? 'bg-[#050505] text-white' : 'bg-gray-100 text-black'} font-sans select-none overflow-hidden`}>
-      <audio 
-        ref={audioRef} 
-        src={currentSong.audioUrl} 
-        crossOrigin="anonymous"
-        onTimeUpdate={() => audioRef.current && setPlayerState(s => ({ ...s, currentTime: audioRef.current!.currentTime }))}
-        onEnded={handleNext}
-        onLoadedMetadata={() => {
-          if (currentSong.id.startsWith('user') && audioRef.current) {
-            setUserSongs(prev => prev.map(s => s.id === currentSong.id ? { ...s, duration: audioRef.current!.duration } : s));
-          }
-        }}
-      />
+      {currentSong && (
+        <audio 
+          ref={audioRef} 
+          src={currentSong.audioUrl} 
+          crossOrigin="anonymous"
+          onTimeUpdate={() => audioRef.current && setPlayerState(s => ({ ...s, currentTime: audioRef.current!.currentTime }))}
+          onEnded={handleNext}
+          onLoadedMetadata={() => {
+            if (audioRef.current) {
+              setLibrary(prev => prev.map(s => s.id === currentSong.id ? { ...s, duration: audioRef.current!.duration } : s));
+            }
+          }}
+        />
+      )}
       
       <input type="file" ref={fileInputRef} onChange={handleFileUpload} multiple accept="audio/*" className="hidden" />
 
@@ -264,119 +331,152 @@ const App: React.FC = () => {
         >
           <div className="p-6 flex items-center justify-between">
             <h2 className="text-xs font-black uppercase tracking-[0.3em] text-white/40">Danh sách bài hát</h2>
-            <span className="text-[10px] font-bold bg-white/5 px-2 py-0.5 rounded-full text-indigo-400">{fullLibrary.length} bài</span>
+            <button onClick={handleResetLibrary} title="Khôi phục mặc định" className="p-1.5 hover:bg-white/10 rounded-lg transition-all text-white/20 hover:text-white">
+               <RotateCcw size={14} />
+            </button>
           </div>
+          
           <div className="flex-1 overflow-y-auto px-2 pb-10 space-y-1 scrollbar-hide">
-            {fullLibrary.map((song, idx) => {
-              const isCurrent = currentSong.id === song.id;
-              return (
-                <div 
-                  key={song.id}
-                  onClick={() => handlePlayByIndex(idx)}
-                  className={`group p-3 rounded-2xl cursor-pointer transition-all flex items-center gap-3 ${isCurrent ? 'bg-indigo-500/10' : 'hover:bg-white/5'}`}
-                >
-                  <div className="relative w-10 h-10 rounded-lg overflow-hidden shrink-0">
-                    <img src={song.coverUrl} className="w-full h-full object-cover" alt="" />
-                    {isCurrent && playerState.isPlaying && (
-                      <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-                        <Waves className="text-white animate-pulse" size={16} />
-                      </div>
-                    )}
+            {isLibraryLoading ? (
+               <div className="flex flex-col items-center justify-center h-40 opacity-20">
+                  <RefreshCw className="animate-spin mb-2" size={24} />
+                  <p className="text-[10px] font-black uppercase">Đang tải...</p>
+               </div>
+            ) : (
+              fullLibrary.map((song, idx) => {
+                const isCurrent = currentSong?.id === song.id;
+                return (
+                  <div 
+                    key={song.id}
+                    onClick={() => handlePlayByIndex(idx)}
+                    className={`group p-3 rounded-2xl cursor-pointer transition-all flex items-center gap-3 ${isCurrent ? 'bg-indigo-500/10' : 'hover:bg-white/5'}`}
+                  >
+                    <div className="relative w-10 h-10 rounded-lg overflow-hidden shrink-0">
+                      <img src={song.coverUrl} className="w-full h-full object-cover" alt="" />
+                      {isCurrent && playerState.isPlaying && (
+                        <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                          <Waves className="text-white animate-pulse" size={16} />
+                        </div>
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-xs font-bold truncate ${isCurrent ? 'text-indigo-400' : 'text-white'}`}>{song.title}</p>
+                      <p className="text-[10px] text-white/30 truncate uppercase tracking-wider">{song.artist}</p>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {isCurrent && <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-ping mr-2" />}
+                      <button 
+                        onClick={(e) => handleDeleteSong(song.id, e)}
+                        className="p-2 rounded-xl opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-white/20 hover:text-red-400 transition-all"
+                        title="Xóa bài hát"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <p className={`text-xs font-bold truncate ${isCurrent ? 'text-indigo-400' : 'text-white'}`}>{song.title}</p>
-                    <p className="text-[10px] text-white/30 truncate uppercase tracking-wider">{song.artist}</p>
-                  </div>
-                  {isCurrent && <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-ping" />}
-                </div>
-              );
-            })}
+                );
+              })
+            )}
+            {!isLibraryLoading && fullLibrary.length === 0 && (
+              <div className="p-10 text-center opacity-20">
+                 <Music size={40} className="mx-auto mb-4" />
+                 <p className="text-xs font-bold uppercase tracking-widest">Thư viện trống</p>
+              </div>
+            )}
           </div>
         </aside>
 
         {/* Center: Player */}
         <main className="flex-1 flex flex-col lg:flex-row gap-6 p-4 lg:p-6 overflow-hidden relative">
-          <div className="flex-1 glass rounded-[2.5rem] lg:rounded-[3.5rem] p-6 lg:p-10 flex flex-col relative overflow-hidden group">
-            <div 
-              className="absolute inset-0 opacity-10 blur-[120px] transition-all duration-1000 pointer-events-none"
-              style={{ backgroundColor: currentSong.color }}
-            />
-            
-            <div className="relative z-10 flex flex-col h-full">
-              <div className="flex justify-between items-start mb-4">
-                <div>
-                  <span className="text-[10px] font-black uppercase tracking-[0.4em] text-white/30 mb-1 block">Now Playing</span>
-                  <h2 className="text-xl lg:text-3xl font-black tracking-tight mb-0.5 truncate max-w-[250px] lg:max-w-none">{currentSong.title}</h2>
-                  <p className="text-xs lg:text-sm text-white/40 font-bold uppercase tracking-widest truncate">{currentSong.artist}</p>
+          {currentSong ? (
+            <div className="flex-1 glass rounded-[2.5rem] lg:rounded-[3.5rem] p-6 lg:p-10 flex flex-col relative overflow-hidden group">
+              <div 
+                className="absolute inset-0 opacity-10 blur-[120px] transition-all duration-1000 pointer-events-none"
+                style={{ backgroundColor: currentSong.color }}
+              />
+              
+              <div className="relative z-10 flex flex-col h-full">
+                <div className="flex justify-between items-start mb-4">
+                  <div>
+                    <span className="text-[10px] font-black uppercase tracking-[0.4em] text-white/30 mb-1 block">Now Playing</span>
+                    <h2 className="text-xl lg:text-3xl font-black tracking-tight mb-0.5 truncate max-w-[250px] lg:max-w-none">{currentSong.title}</h2>
+                    <p className="text-xs lg:text-sm text-white/40 font-bold uppercase tracking-widest truncate">{currentSong.artist}</p>
+                  </div>
+                  <button 
+                    onClick={() => setFavorites(prev => prev.includes(currentSong.id) ? prev.filter(id => id !== currentSong.id) : [...prev, currentSong.id])}
+                    className={`p-3 lg:p-4 rounded-2xl lg:rounded-3xl transition-all ${favorites.includes(currentSong.id) ? 'bg-red-500 text-white' : 'bg-white/5 text-white/40 hover:text-white'}`}
+                  >
+                    <Heart size={20} fill={favorites.includes(currentSong.id) ? "currentColor" : "none"} />
+                  </button>
                 </div>
-                <button 
-                  onClick={() => setFavorites(prev => prev.includes(currentSong.id) ? prev.filter(id => id !== currentSong.id) : [...prev, currentSong.id])}
-                  className={`p-3 lg:p-4 rounded-2xl lg:rounded-3xl transition-all ${favorites.includes(currentSong.id) ? 'bg-red-500 text-white' : 'bg-white/5 text-white/40 hover:text-white'}`}
-                >
-                  <Heart size={20} fill={favorites.includes(currentSong.id) ? "currentColor" : "none"} />
-                </button>
-              </div>
 
-              <div className="flex-1 flex flex-col items-center justify-center gap-6 lg:gap-10 py-4">
-                <div className="relative">
-                  <div className={`w-40 h-40 lg:w-60 lg:h-60 rounded-[2.5rem] lg:rounded-[4rem] overflow-hidden shadow-2xl transition-all duration-1000 ${playerState.isPlaying ? 'scale-105 shadow-indigo-500/20' : 'scale-95 grayscale-[0.5]'}`}>
-                    <img src={currentSong.coverUrl} alt={currentSong.title} className="w-full h-full object-cover" />
+                <div className="flex-1 flex flex-col items-center justify-center gap-6 lg:gap-10 py-4">
+                  <div className="relative">
+                    <div className={`w-40 h-40 lg:w-60 lg:h-60 rounded-[2.5rem] lg:rounded-[4rem] overflow-hidden shadow-2xl transition-all duration-1000 ${playerState.isPlaying ? 'scale-105 shadow-indigo-500/20' : 'scale-95 grayscale-[0.5]'}`}>
+                      <img src={currentSong.coverUrl} alt={currentSong.title} className="w-full h-full object-cover" />
+                    </div>
+                  </div>
+
+                  <div className="w-full max-w-xl">
+                    <Visualizer analyser={analyser} color={currentSong.color} type={playerState.visualizerType} theme={playerState.visualizerTheme} />
+                    
+                    <div className="mt-6 lg:mt-8 space-y-3">
+                        <input 
+                          type="range" 
+                          min="0" 
+                          max={currentSong.duration || 100} 
+                          value={playerState.currentTime}
+                          onChange={(e) => {
+                            const time = Number(e.target.value);
+                            if (audioRef.current) audioRef.current.currentTime = time;
+                          }}
+                          className="w-full h-1 bg-white/10 rounded-full appearance-none cursor-pointer accent-indigo-500"
+                        />
+                        <div className="flex justify-between text-[10px] font-mono text-white/30 tracking-widest">
+                          <span>{formatTime(playerState.currentTime)}</span>
+                          <span>{formatTime(currentSong.duration)}</span>
+                        </div>
+                    </div>
                   </div>
                 </div>
 
-                <div className="w-full max-w-xl">
-                   <Visualizer analyser={analyser} color={currentSong.color} type={playerState.visualizerType} theme={playerState.visualizerTheme} />
-                   
-                   <div className="mt-6 lg:mt-8 space-y-3">
-                      <input 
-                        type="range" 
-                        min="0" 
-                        max={currentSong.duration || 100} 
-                        value={playerState.currentTime}
-                        onChange={(e) => {
-                          const time = Number(e.target.value);
-                          if (audioRef.current) audioRef.current.currentTime = time;
-                        }}
-                        className="w-full h-1 bg-white/10 rounded-full appearance-none cursor-pointer accent-indigo-500"
-                      />
-                      <div className="flex justify-between text-[10px] font-mono text-white/30 tracking-widest">
-                        <span>{formatTime(playerState.currentTime)}</span>
-                        <span>{formatTime(currentSong.duration)}</span>
-                      </div>
-                   </div>
-                </div>
-              </div>
-
-              {/* Controls */}
-              <div className="flex items-center justify-center gap-6 lg:gap-10 mt-auto">
-                <button onClick={() => setPlayerState(s => ({ ...s, isShuffle: !s.isShuffle }))} className={`transition-all ${playerState.isShuffle ? 'text-indigo-400' : 'text-white/20 hover:text-white/40'}`}>
-                  <Shuffle size={18} />
-                </button>
-                
-                <div className="flex items-center gap-4 lg:gap-8">
-                  <button onClick={handlePrev} className="text-white/30 hover:text-white transition-all">
-                    <SkipBack size={24} lg-size={28} fill="currentColor" />
+                {/* Controls */}
+                <div className="flex items-center justify-center gap-6 lg:gap-10 mt-auto">
+                  <button onClick={() => setPlayerState(s => ({ ...s, isShuffle: !s.isShuffle }))} className={`transition-all ${playerState.isShuffle ? 'text-indigo-400' : 'text-white/20 hover:text-white/40'}`}>
+                    <Shuffle size={18} />
                   </button>
+                  
+                  <div className="flex items-center gap-4 lg:gap-8">
+                    <button onClick={handlePrev} className="text-white/30 hover:text-white transition-all">
+                      <SkipBack size={24} lg-size={28} fill="currentColor" />
+                    </button>
+                    <button 
+                      onClick={() => setPlayerState(s => ({ ...s, isPlaying: !s.isPlaying }))}
+                      className="w-16 h-16 lg:w-20 lg:h-20 rounded-[2rem] lg:rounded-[2.5rem] bg-white text-black flex items-center justify-center hover:scale-110 active:scale-95 transition-all shadow-xl"
+                    >
+                      {playerState.isPlaying ? <Pause size={28} fill="currentColor" /> : <Play size={28} fill="currentColor" className="ml-1" />}
+                    </button>
+                    <button onClick={handleNext} className="text-white/30 hover:text-white transition-all">
+                      <SkipForward size={24} lg-size={28} fill="currentColor" />
+                    </button>
+                  </div>
+
                   <button 
-                    onClick={() => setPlayerState(s => ({ ...s, isPlaying: !s.isPlaying }))}
-                    className="w-16 h-16 lg:w-20 lg:h-20 rounded-[2rem] lg:rounded-[2.5rem] bg-white text-black flex items-center justify-center hover:scale-110 active:scale-95 transition-all shadow-xl"
+                    onClick={() => setPlayerState(s => ({ ...s, repeatMode: s.repeatMode === 'none' ? 'all' : s.repeatMode === 'all' ? 'one' : 'none' }))}
+                    className={`transition-all ${playerState.repeatMode !== 'none' ? 'text-indigo-400' : 'text-white/20 hover:text-white/40'}`}
                   >
-                    {playerState.isPlaying ? <Pause size={28} fill="currentColor" /> : <Play size={28} fill="currentColor" className="ml-1" />}
-                  </button>
-                  <button onClick={handleNext} className="text-white/30 hover:text-white transition-all">
-                    <SkipForward size={24} lg-size={28} fill="currentColor" />
+                    {playerState.repeatMode === 'one' ? <Repeat1 size={18} /> : <Repeat size={18} />}
                   </button>
                 </div>
-
-                <button 
-                  onClick={() => setPlayerState(s => ({ ...s, repeatMode: s.repeatMode === 'none' ? 'all' : s.repeatMode === 'all' ? 'one' : 'none' }))}
-                  className={`transition-all ${playerState.repeatMode !== 'none' ? 'text-indigo-400' : 'text-white/20 hover:text-white/40'}`}
-                >
-                  {playerState.repeatMode === 'one' ? <Repeat1 size={18} /> : <Repeat size={18} />}
-                </button>
               </div>
             </div>
-          </div>
+          ) : (
+            <div className="flex-1 glass rounded-[3.5rem] flex flex-col items-center justify-center text-center p-10 opacity-20">
+               <Music2 size={80} strokeWidth={1} className="mb-6" />
+               <h2 className="text-2xl font-black uppercase tracking-widest">Chưa có bài hát nào</h2>
+               <p className="text-sm font-bold mt-2">Hãy tải nhạc lên hoặc khôi phục danh sách mặc định.</p>
+            </div>
+          )}
 
           {/* Right Side: AI Assistant & Lyrics */}
           <div className="w-full lg:w-[400px] flex flex-col gap-6 lg:h-full">
@@ -402,7 +502,7 @@ const App: React.FC = () => {
                
                {activeTab === 'lyrics' && (
                  <div className="glass rounded-[2.5rem] lg:rounded-[3.5rem] h-full p-6 lg:p-8 overflow-hidden relative">
-                   <Lyrics lyrics={currentSong.lyrics || []} currentTime={playerState.currentTime} onSeek={(t) => audioRef.current && (audioRef.current.currentTime = t)} color={currentSong.color} />
+                   <Lyrics lyrics={currentSong?.lyrics || []} currentTime={playerState.currentTime} onSeek={(t) => audioRef.current && (audioRef.current.currentTime = t)} color={currentSong?.color || '#fff'} />
                  </div>
                )}
                
@@ -435,51 +535,53 @@ const App: React.FC = () => {
       </div>
 
       {/* Mini Player / Footer */}
-      <footer className="px-6 py-4 flex items-center justify-between border-t border-white/5 bg-black/40 backdrop-blur-xl z-40">
-        <div className="flex items-center gap-4 w-1/3">
-           <div className="w-12 h-12 rounded-xl overflow-hidden shrink-0 shadow-lg border border-white/5">
-             <img src={currentSong.coverUrl} className="w-full h-full object-cover" alt="" />
-           </div>
-           <div className="min-w-0 hidden sm:block">
-             <p className="text-sm font-bold truncate text-white">{currentSong.title}</p>
-             <p className="text-[10px] text-white/30 truncate uppercase tracking-widest font-bold">{currentSong.artist}</p>
-           </div>
-        </div>
-
-        <div className="flex items-center gap-6 w-1/3 justify-center">
-          <div className="hidden lg:flex items-center gap-4 text-white/40">
-             <Volume2 size={16} />
-             <input 
-              type="range" min="0" max="1" step="0.01" value={playerState.volume}
-              onChange={(e) => {
-                const val = Number(e.target.value);
-                setPlayerState(s => ({ ...s, volume: val }));
-                if (audioRef.current) audioRef.current.volume = val;
-              }}
-              className="w-24 h-1 bg-white/10 rounded-full appearance-none cursor-pointer accent-indigo-500"
-            />
+      {currentSong && (
+        <footer className="px-6 py-4 flex items-center justify-between border-t border-white/5 bg-black/40 backdrop-blur-xl z-40">
+          <div className="flex items-center gap-4 w-1/3">
+            <div className="w-12 h-12 rounded-xl overflow-hidden shrink-0 shadow-lg border border-white/5">
+              <img src={currentSong.coverUrl} className="w-full h-full object-cover" alt="" />
+            </div>
+            <div className="min-w-0 hidden sm:block">
+              <p className="text-sm font-bold truncate text-white">{currentSong.title}</p>
+              <p className="text-[10px] text-white/30 truncate uppercase tracking-widest font-bold">{currentSong.artist}</p>
+            </div>
           </div>
-        </div>
 
-        <div className="flex items-center gap-4 w-1/3 justify-end">
-          <button 
-            onClick={() => setPlayerState(s => ({ ...s, isPlaying: !s.isPlaying }))}
-            className="p-3 rounded-2xl bg-white text-black hover:scale-105 active:scale-95 transition-all"
-          >
-            {playerState.isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="ml-0.5" />}
-          </button>
-        </div>
-      </footer>
+          <div className="flex items-center gap-6 w-1/3 justify-center">
+            <div className="hidden lg:flex items-center gap-4 text-white/40">
+              <Volume2 size={16} />
+              <input 
+                type="range" min="0" max="1" step="0.01" value={playerState.volume}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  setPlayerState(s => ({ ...s, volume: val }));
+                  if (audioRef.current) audioRef.current.volume = val;
+                }}
+                className="w-24 h-1 bg-white/10 rounded-full appearance-none cursor-pointer accent-indigo-500"
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4 w-1/3 justify-end">
+            <button 
+              onClick={() => setPlayerState(s => ({ ...s, isPlaying: !s.isPlaying }))}
+              className="p-3 rounded-2xl bg-white text-black hover:scale-105 active:scale-95 transition-all"
+            >
+              {playerState.isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="ml-0.5" />}
+            </button>
+          </div>
+        </footer>
+      )}
 
       {showPlaylistManager && (
         <PlaylistManager 
-          playlists={playlists} songs={fullLibrary} onClose={() => setShowPlaylistManager(false)}
+          playlists={playlists} songs={library} onClose={() => setShowPlaylistManager(false)}
           onCreatePlaylist={(name) => setPlaylists([...playlists, { id: Date.now().toString(), name, songIds: [] }])}
           onDeletePlaylist={(id) => setPlaylists(playlists.filter(p => p.id !== id))}
           onAddToPlaylist={(pid, sid) => setPlaylists(playlists.map(p => p.id === pid ? { ...p, songIds: [...p.songIds, sid] } : p))}
           onRemoveFromPlaylist={(pid, sid) => setPlaylists(playlists.map(p => p.id === pid ? { ...p, songIds: p.songIds.filter(id => id !== sid) } : p))}
           onSelectPlaylist={(p) => {
-             const songIdx = fullLibrary.findIndex(s => s.id === p.songIds[0]);
+             const songIdx = library.findIndex(s => s.id === p.songIds[0]);
              if (songIdx !== -1) handlePlayByIndex(songIdx);
              setShowPlaylistManager(false);
           }}
