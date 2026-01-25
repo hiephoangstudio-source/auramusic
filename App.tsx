@@ -34,7 +34,7 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'ai' | 'lyrics' | 'story'>('ai');
   const [showLibrary, setShowLibrary] = useState(true);
   const [showPlaylistStudio, setShowPlaylistStudio] = useState(false);
-  const [songStory, setSongStory] = useState<string | null>(null);
+  const [songStoryData, setSongStoryData] = useState<{text: string, sources: any[]} | null>(null);
   const [isStoryLoading, setIsStoryLoading] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -78,9 +78,27 @@ const App: React.FC = () => {
   const currentQueueSongs = useMemo(() => activeQueueIds.map(id => library.find(s => s.id === id)).filter(Boolean) as Song[], [activeQueueIds, library]);
   const currentSong = useMemo(() => currentQueueSongs.length === 0 ? null : currentQueueSongs[playerState.currentSongIndex] || currentQueueSongs[0], [playerState.currentSongIndex, currentQueueSongs]);
 
+  // Fetch song story when tab becomes active or song changes
+  useEffect(() => {
+    if (currentSong && activeTab === 'story') {
+      const fetchStory = async () => {
+        setIsStoryLoading(true);
+        const data = await getSongStory(currentSong.title, currentSong.artist);
+        if (data && !data.error) {
+          setSongStoryData(data);
+        } else {
+          setSongStoryData({ text: "Giai điệu này kể câu chuyện của riêng nó.", sources: [] });
+        }
+        setIsStoryLoading(false);
+      };
+      fetchStory();
+    }
+  }, [currentSong?.id, activeTab]);
+
   const handleCreatePlaylist = (name: string) => setPlaylists([...playlists, { id: `pl-${Date.now()}`, name, songIds: [] }]);
   const handleAddToPlaylist = (playlistId: string, songId: string) => setPlaylists(prev => prev.map(pl => (pl.id === playlistId && !pl.songIds.includes(songId)) ? { ...pl, songIds: [...pl.songIds, songId] } : pl));
   const handleRemoveFromPlaylist = (playlistId: string, songId: string) => setPlaylists(prev => prev.map(pl => pl.id === playlistId ? { ...pl, songIds: pl.songIds.filter(id => id !== songId) } : pl));
+  
   const handleReorderPlaylist = (playlistId: string, newSongIds: string[]) => {
     setPlaylists(prev => prev.map(pl => pl.id === playlistId ? { ...pl, songIds: newSongIds } : pl));
     if (viewingPlaylistId === playlistId) setActiveQueueIds(newSongIds);
@@ -93,7 +111,6 @@ const App: React.FC = () => {
       const sA = library.find(s => s.id === a);
       const sB = library.find(s => s.id === b);
       if (!sA || !sB) return 0;
-      // SỬ DỤNG NATURAL SORT (Hiểu Q2 nhỏ hơn Q19)
       return type === 'title' 
         ? sA.title.localeCompare(sB.title, undefined, { numeric: true, sensitivity: 'base' })
         : sA.artist.localeCompare(sB.artist, undefined, { numeric: true, sensitivity: 'base' });
@@ -106,6 +123,48 @@ const App: React.FC = () => {
     setActiveQueueIds(ids);
     setPlayerState(s => ({ ...s, currentSongIndex: startIndex, isPlaying: true, currentTime: 0 }));
     if (window.innerWidth < 768) setShowLibrary(false);
+  };
+
+  // Hàm xử lý phát nhạc từ kết quả AI Search
+  const handlePlayAISong = async (title: string, artist: string) => {
+    // 1. Tìm trong thư viện hiện tại
+    const existing = library.find(s => 
+      s.title.toLowerCase().includes(title.toLowerCase()) && 
+      s.artist.toLowerCase().includes(artist.toLowerCase())
+    );
+
+    if (existing) {
+      const idxInQueue = activeQueueIds.indexOf(existing.id);
+      if (idxInQueue !== -1) {
+        setPlayerState(s => ({ ...s, currentSongIndex: idxInQueue, isPlaying: true }));
+      } else {
+        const newQueue = [...activeQueueIds, existing.id];
+        setActiveQueueIds(newQueue);
+        setPlayerState(s => ({ ...s, currentSongIndex: newQueue.length - 1, isPlaying: true }));
+      }
+    } else {
+      // 2. Tạo bản nhạc ảo nếu không có trong thư viện
+      const virtualId = `online-${Date.now()}`;
+      const virtualSong: Song = {
+        id: virtualId,
+        title,
+        artist,
+        album: 'Aura Cloud Search',
+        coverUrl: `https://picsum.photos/seed/${encodeURIComponent(title)}/400/400`,
+        audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3', // Placeholder audio cho kết quả tìm kiếm
+        duration: 0,
+        color: '#6366f1'
+      };
+      
+      const newLib = [...library, virtualSong];
+      setLibrary(newLib);
+      const newQueue = [...activeQueueIds, virtualId];
+      setActiveQueueIds(newQueue);
+      setPlayerState(s => ({ ...s, currentSongIndex: newQueue.length - 1, isPlaying: true }));
+      
+      // Thông báo cho người dùng
+      if ('vibrate' in navigator) navigator.vibrate(50);
+    }
   };
 
   const initAudioContext = useCallback(() => {
@@ -272,9 +331,48 @@ const App: React.FC = () => {
                {(['ai', 'lyrics', 'story'] as const).map(tab => <button key={tab} onClick={() => setActiveTab(tab)} className={`flex-1 py-3 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${activeTab === tab ? 'bg-white text-black' : 'text-white/40 hover:text-white/60'}`}>{tab === 'ai' ? 'Trợ lý' : tab === 'lyrics' ? 'Lời bài hát' : 'Câu chuyện'}</button>)}
             </div>
             <div className="flex-1 min-h-[400px]">
-               {activeTab === 'ai' && <AIDJ onPlaySong={(title, artist) => {}} availableSongs={library} />}
+               {activeTab === 'ai' && <AIDJ onPlaySong={handlePlayAISong} availableSongs={library} />}
                {activeTab === 'lyrics' && <div className="glass rounded-[3rem] h-full p-8"><Lyrics lyrics={currentSong?.lyrics || []} currentTime={playerState.currentTime} onSeek={(t) => audioRef.current && (audioRef.current.currentTime = t)} color={currentSong?.color || '#fff'} /></div>}
-               {activeTab === 'story' && <div className="glass rounded-[3rem] h-full p-10 overflow-y-auto flex flex-col"><h3 className="text-lg font-black mb-8 flex items-center gap-3"><Sparkles className="text-indigo-400" size={20} /> Deep Insights</h3><div className="space-y-6"><p className="text-base font-medium leading-relaxed italic text-white/80">"{songStory || 'Aura đang cảm nhận...'}"</p></div></div>}
+               {activeTab === 'story' && (
+                 <div className="glass rounded-[3rem] h-full p-10 overflow-y-auto flex flex-col">
+                   <h3 className="text-lg font-black mb-8 flex items-center gap-3"><Sparkles className="text-indigo-400" size={20} /> Deep Insights</h3>
+                   <div className="space-y-6">
+                     {isStoryLoading ? (
+                       <div className="flex flex-col items-center justify-center py-10 opacity-40 gap-4">
+                         <Loader2 className="animate-spin text-indigo-400" size={32} />
+                         <p className="text-[10px] font-black uppercase tracking-[0.2em]">Aura đang cảm nhận...</p>
+                       </div>
+                     ) : (
+                       <>
+                         <p className="text-base font-medium leading-relaxed italic text-white/80">
+                           "{songStoryData?.text || 'Chọn một bài hát để nghe câu chuyện của nó.'}"
+                         </p>
+                         
+                         {/* Display Grounding Sources for Story as required by guidelines */}
+                         {songStoryData?.sources && songStoryData.sources.length > 0 && (
+                           <div className="mt-8 pt-8 border-t border-white/5">
+                             <p className="text-[9px] font-black uppercase tracking-[0.4em] text-white/20 mb-4">Tìm hiểu thêm:</p>
+                             <div className="space-y-3">
+                               {songStoryData.sources.map((source: any, idx: number) => (
+                                 <a 
+                                   key={idx} 
+                                   href={source.uri} 
+                                   target="_blank" 
+                                   rel="noopener noreferrer" 
+                                   className="flex items-center gap-3 text-xs text-indigo-400 hover:text-indigo-300 transition-colors group"
+                                 >
+                                   <ExternalLink size={14} className="shrink-0 group-hover:scale-110 transition-transform" />
+                                   <span className="truncate">{source.title}</span>
+                                 </a>
+                               ))}
+                             </div>
+                           </div>
+                         )}
+                       </>
+                     )}
+                   </div>
+                 </div>
+               )}
             </div>
           </div>
         </main>

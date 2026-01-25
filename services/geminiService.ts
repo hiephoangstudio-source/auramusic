@@ -60,7 +60,14 @@ export const searchMusicOnline = async (query: string): Promise<any> => {
       },
     });
 
-    return safeParseJSON(response.text) || [];
+    const data = safeParseJSON(response.text);
+    // Extract grounding sources for search results as required by guidelines
+    const sources = response.candidates?.[0]?.groundingMetadata?.groundingChunks?.map((chunk: any) => ({
+      title: chunk.web?.title || "Source",
+      uri: chunk.web?.uri
+    })).filter((s: any) => s.uri) || [];
+
+    return data ? { tracks: data, sources } : [];
   } catch (error) {
     return handleApiError(error);
   }
@@ -102,6 +109,7 @@ export const getMoodRecommendation = async (mood: string, favorites?: string[], 
     });
 
     const data = safeParseJSON(response.text);
+    // Extract grounding sources as required by guidelines
     const sources = response.candidates?.[0]?.groundingMetadata?.groundingChunks?.map((chunk: any) => ({
       title: chunk.web?.title || "Source",
       uri: chunk.web?.uri
@@ -121,7 +129,15 @@ export const getSongStory = async (title: string, artist: string): Promise<any> 
       contents: `Tell a 2-sentence story about song "${title}" by "${artist}" in Vietnamese. Briefly mention its impact or style.`,
       config: { tools: [{ googleSearch: {} }] }
     });
-    return response.text || "Âm nhạc kể câu chuyện của riêng nó.";
+    
+    const text = response.text || "Âm nhạc kể câu chuyện của riêng nó.";
+    // Extract grounding sources as required by guidelines
+    const sources = response.candidates?.[0]?.groundingMetadata?.groundingChunks?.map((chunk: any) => ({
+      title: chunk.web?.title || "Nguồn tin",
+      uri: chunk.web?.uri
+    })).filter((s: any) => s.uri) || [];
+
+    return { text, sources };
   } catch (error) {
     return handleApiError(error);
   }
