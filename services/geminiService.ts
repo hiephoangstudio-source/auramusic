@@ -2,47 +2,89 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Recommendation, Song } from "../types";
 
-// Hàm khởi tạo instance AI mới để đảm bảo luôn dùng Key mới nhất nếu người dùng thay đổi
+// Initialize AI client using the environment variable API_KEY
 const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-export interface GeminiError extends Error {
-  status?: number;
-  reason?: string;
+// Fallback audio URL for search results (when direct stream link is unavailable)
+const PREVIEW_STREAM_URL = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3";
+
+export interface OnlineSongResult {
+  title: string;
+  artist: string;
+  album: string;
+  coverUrl: string;
+  sourceUri?: string;
 }
 
-export const getMoodRecommendation = async (
-  mood: string, 
-  favorites?: string[], 
-  versionRequest?: string,
-  availableSongs?: Song[]
-): Promise<Recommendation | { error: string; code: string } | null> => {
+/**
+ * Searches for music online using Google Search grounding.
+ */
+export const searchMusicOnline = async (query: string): Promise<OnlineSongResult[]> => {
   try {
     const ai = getAI();
-    const favoriteContext = favorites && favorites.length > 0 
-      ? `Người dùng thích các bài hát: ${favorites.join(", ")}.` 
-      : "";
-    
-    const libraryContext = availableSongs && availableSongs.length > 0
-      ? `DƯỚI ĐÂY LÀ DANH SÁCH BÀI HÁT CÓ SẴN TRONG THƯ VIỆN: ${availableSongs.map(s => `"${s.title}" của "${s.artist}"`).join(", ")}.`
-      : "";
-
-    const versionPrompt = versionRequest 
-      ? `ĐẶC BIỆT: Tìm các phiên bản "${versionRequest}" cho tâm trạng này.` 
-      : "";
-
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `Người dùng cảm thấy: "${mood}". ${favoriteContext} ${libraryContext} ${versionPrompt}
-      Hãy phân tích và đề xuất playlist 5 bài phù hợp dạng JSON.`,
+      contents: `Tìm kiếm danh sách các bài hát liên quan đến: "${query}". 
+      Hãy trả về thông tin chi tiết của ít nhất 5 bài hát phù hợp nhất.
+      Sử dụng Google Search để lấy thông tin chính xác về nghệ sĩ, album và link ảnh bìa (nếu có).
+      Nếu không có link ảnh bìa thực tế, hãy sử dụng URL ảnh giả lập từ picsum.photos dựa trên tên bài hát.`,
       config: {
+        tools: [{ googleSearch: {} }],
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              artist: { type: Type.STRING },
+              album: { type: Type.STRING },
+              coverUrl: { type: Type.STRING },
+              sourceUri: { type: Type.STRING }
+            },
+            required: ["title", "artist"],
+            propertyOrdering: ["title", "artist", "album", "coverUrl", "sourceUri"]
+          }
+        }
+      },
+    });
+
+    const text = response.text;
+    if (text) {
+      return JSON.parse(text.trim());
+    }
+    return [];
+  } catch (error) {
+    console.error("Online search error:", error);
+    return [];
+  }
+};
+
+/**
+ * Gets mood-based music recommendations using Google Search grounding.
+ * Extracts grounding sources for UI display.
+ */
+export const getMoodRecommendation = async (
+  mood: string, 
+  favorites?: string[],
+  availableSongs?: Song[]
+): Promise<any> => {
+  try {
+    const ai = getAI();
+    const favsStr = favorites && favorites.length > 0 ? ` Favorites: ${favorites.join(', ')}.` : '';
+    const libStr = availableSongs && availableSongs.length > 0 ? ` Available in library: ${availableSongs.map(s => s.title).join(', ')}.` : '';
+    
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `Tâm trạng người dùng: "${mood}".${favsStr}${libStr} Hãy gợi ý 5 bài hát trending phù hợp nhất. Trả về JSON.`,
+      config: {
+        tools: [{ googleSearch: {} }],
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
           properties: {
             vibe: { type: Type.STRING },
             description: { type: Type.STRING },
-            suggestedArtist: { type: Type.STRING },
-            suggestedGenre: { type: Type.STRING },
             suggestedPlaylist: {
               type: Type.ARRAY,
               items: {
@@ -50,65 +92,62 @@ export const getMoodRecommendation = async (
                 properties: {
                   title: { type: Type.STRING },
                   artist: { type: Type.STRING }
-                }
-              }
-            },
-            remixSuggestions: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  title: { type: Type.STRING },
-                  version: { type: Type.STRING }
-                }
+                },
+                required: ["title", "artist"],
+                propertyOrdering: ["title", "artist"]
               }
             }
           },
-          required: ["vibe", "description", "suggestedArtist", "suggestedGenre"]
+          required: ["vibe", "description", "suggestedPlaylist"],
+          propertyOrdering: ["vibe", "description", "suggestedPlaylist"]
         }
       }
     });
 
-    if (response.text) {
-      return JSON.parse(response.text.trim());
-    }
-    return null;
+    const text = response.text;
+    if (!text) return null;
+
+    const data = JSON.parse(text.trim());
+    
+    // Extracting grounding chunks to comply with Google Search grounding requirements
+    const sources = response.candidates?.[0]?.groundingMetadata?.groundingChunks?.map((chunk: any) => ({
+      title: chunk.web?.title || "Search Result",
+      uri: chunk.web?.uri
+    })).filter((s: any) => s.uri) || [];
+
+    return { ...data, sources };
   } catch (error: any) {
-    console.error("Gemini recommendation error:", error);
-    if (error.message?.includes("quota") || error.status === 429) {
-      return { error: "Hết hạn mức sử dụng (Quota Exceeded)", code: "QUOTA_EXCEEDED" };
+    console.error("Mood recommendation error:", error);
+    // Special handling for quota errors as requested by UI.
+    // Check for quota exceeded message or 429 status code.
+    if (error?.message?.toLowerCase().includes('quota') || error?.status === 429) {
+      return { error: true, code: 'QUOTA_EXCEEDED' };
     }
     return null;
   }
 };
 
-export const getSongStory = async (title: string, artist: string, alternate: boolean = false): Promise<string> => {
-  try {
-    const ai = getAI();
-    const styleInstruction = alternate 
-      ? "Hãy kể một câu chuyện siêu thực hoặc tương lai hơn." 
-      : "Hãy kể một câu chuyện ngắn gọn hoặc ý nghĩa đằng sau bài hát.";
-
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: `${styleInstruction} về bài hát "${title}" của "${artist}". Trả lời bằng tiếng Việt, khoảng 80 từ.`,
-    });
-    return response.text || "Mỗi bài hát là một cuộc hành trình.";
-  } catch (error: any) {
-    if (error.status === 429) return "QUOTA_LIMIT_REACHED";
-    return "Câu chuyện đang được viết tiếp...";
-  }
+/**
+ * Generates a story about a song using Google Search grounding.
+ */
+export const getSongStory = async (title: string, artist: string): Promise<string> => {
+  const ai = getAI();
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: `Kể chuyện về bài hát "${title}" của "${artist}". Ngắn gọn, tiếng Việt.`,
+    config: { tools: [{ googleSearch: {} }] }
+  });
+  return response.text || "Âm nhạc kể câu chuyện của riêng nó.";
 };
 
+/**
+ * Provides insights about a song.
+ */
 export const getSongInsight = async (title: string, artist: string): Promise<string> => {
-  try {
-    const ai = getAI();
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: `Thông tin thú vị về bài hát "${title}" của "${artist}". Dưới 40 từ, tiếng Việt.`,
-    });
-    return response.text || "Giai điệu mang linh hồn riêng.";
-  } catch (error: any) {
-    return "AI DJ đang suy ngẫm...";
-  }
+  const ai = getAI();
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: `Insight ngắn về "${title}" - "${artist}".`,
+  });
+  return response.text || "";
 };
