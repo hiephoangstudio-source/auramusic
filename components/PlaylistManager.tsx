@@ -3,7 +3,7 @@ import React, { useState, useMemo } from 'react';
 import { 
   Plus, Trash2, Music, ListMusic, X, Search, CheckCircle2, GripVertical, 
   Sparkles, ArrowRight, Library, Play, Check, Square, CheckSquare, 
-  CopyPlus, ChevronRight
+  CopyPlus, ChevronRight, ArrowUpDown
 } from 'lucide-react';
 import { Playlist, Song } from '../types';
 
@@ -14,6 +14,7 @@ interface PlaylistManagerProps {
   onDeletePlaylist: (id: string) => void;
   onAddToPlaylist: (playlistId: string, songId: string) => void;
   onRemoveFromPlaylist: (playlistId: string, songId: string) => void;
+  onReorderPlaylist: (playlistId: string, newSongIds: string[]) => void;
   onSelectPlaylist: (playlist: Playlist) => void;
   onClose: () => void;
 }
@@ -25,16 +26,20 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
   onDeletePlaylist,
   onAddToPlaylist,
   onRemoveFromPlaylist,
+  onReorderPlaylist,
   onSelectPlaylist,
   onClose
 }) => {
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(playlists[0]?.id || null);
   const [searchSong, setSearchSong] = useState('');
-  const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const [isDraggingOverTarget, setIsDraggingOverTarget] = useState(false);
   
-  // State cho việc chọn nhiều bài hát
-  const [selectedSongIds, setSelectedSongIds] = useState<Set<string>>(new Set());
+  // State cho việc chọn nhiều bài hát từ thư viện
+  const [selectedLibrarySongIds, setSelectedLibrarySongIds] = useState<Set<string>>(new Set());
+
+  // State hỗ trợ sắp xếp lại bên trong Playlist
+  const [draggedItemIndex, setDraggedItemIndex] = useState<number | null>(null);
 
   const selectedPlaylist = useMemo(() => 
     playlists.find(p => p.id === selectedPlaylistId), 
@@ -55,49 +60,74 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
     }
   };
 
-  const toggleSelectSong = (id: string) => {
-    const newSet = new Set(selectedSongIds);
+  const toggleSelectLibrarySong = (id: string) => {
+    const newSet = new Set(selectedLibrarySongIds);
     if (newSet.has(id)) newSet.delete(id);
     else newSet.add(id);
-    setSelectedSongIds(newSet);
+    setSelectedLibrarySongIds(newSet);
   };
 
   const selectAllFiltered = () => {
-    if (selectedSongIds.size === filteredLibrary.length) {
-      setSelectedSongIds(new Set());
+    if (selectedLibrarySongIds.size === filteredLibrary.length) {
+      setSelectedLibrarySongIds(new Set());
     } else {
-      setSelectedSongIds(new Set(filteredLibrary.map(s => s.id)));
+      setSelectedLibrarySongIds(new Set(filteredLibrary.map(s => s.id)));
     }
   };
 
   const addSelectedToPlaylist = () => {
     if (!selectedPlaylistId) return;
-    selectedSongIds.forEach(id => {
+    selectedLibrarySongIds.forEach(id => {
       onAddToPlaylist(selectedPlaylistId, id);
     });
-    setSelectedSongIds(new Set());
+    setSelectedLibrarySongIds(new Set());
     if ('vibrate' in navigator) navigator.vibrate([30, 50, 30]);
   };
 
-  const handleDragStart = (e: React.DragEvent, songId: string) => {
+  // Kéo từ Thư viện thả vào Playlist
+  const handleLibraryDragStart = (e: React.DragEvent, songId: string) => {
+    e.dataTransfer.setData('source', 'library');
     e.dataTransfer.setData('songId', songId);
     e.dataTransfer.effectAllowed = 'copy';
   };
 
-  const handleDrop = (e: React.DragEvent) => {
+  // Kéo bài hát BÊN TRONG Playlist để sắp xếp
+  const handlePlaylistDragStart = (index: number) => {
+    setDraggedItemIndex(index);
+  };
+
+  const handlePlaylistDragOver = (e: React.DragEvent, index: number) => {
     e.preventDefault();
-    setIsDraggingOver(false);
+    if (draggedItemIndex === null || draggedItemIndex === index) return;
+    
+    // Logic reorder tạm thời trực quan
+    if (selectedPlaylist && selectedPlaylistId) {
+      const newIds = [...selectedPlaylist.songIds];
+      const draggedItem = newIds[draggedItemIndex];
+      newIds.splice(draggedItemIndex, 1);
+      newIds.splice(index, 0, draggedItem);
+      onReorderPlaylist(selectedPlaylistId, newIds);
+      setDraggedItemIndex(index);
+    }
+  };
+
+  const handleDropOnPlaylist = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingOverTarget(false);
+    const source = e.dataTransfer.getData('source');
     const songId = e.dataTransfer.getData('songId');
-    if (songId && selectedPlaylistId) {
+
+    if (source === 'library' && songId && selectedPlaylistId) {
       onAddToPlaylist(selectedPlaylistId, songId);
     }
+    setDraggedItemIndex(null);
   };
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center p-2 sm:p-6 bg-black/95 backdrop-blur-3xl animate-in fade-in duration-300">
       <div className="glass w-full max-w-7xl h-[95vh] rounded-[2rem] sm:rounded-[4rem] p-4 sm:p-10 flex flex-col relative animate-in zoom-in-95 duration-500 overflow-hidden border-white/10 shadow-2xl">
         
-        {/* Close Button */}
+        {/* Nút Đóng */}
         <button 
           onClick={onClose}
           className="absolute top-6 right-6 sm:top-10 sm:right-10 p-3 hover:bg-white/10 rounded-full transition-all text-white/40 hover:text-white z-50"
@@ -111,25 +141,25 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
               <ListMusic size={28} className="text-white" />
             </div>
             <div>
-              <h2 className="text-2xl sm:text-3xl font-black tracking-tighter uppercase italic">Playlist Studio</h2>
-              <p className="text-[9px] font-black text-white/30 uppercase tracking-[0.4em]">Quản lý danh sách phát chuyên nghiệp</p>
+              <h2 className="text-2xl sm:text-3xl font-black tracking-tighter uppercase italic leading-none">Playlist Studio</h2>
+              <p className="text-[9px] font-black text-white/30 uppercase tracking-[0.4em] mt-1">Cá nhân hóa trải nghiệm âm nhạc</p>
             </div>
           </div>
         </header>
 
         <div className="flex flex-col lg:flex-row gap-6 flex-1 min-h-0 overflow-hidden">
           
-          {/* COLUMN 1: PLAYLIST SELECTION */}
+          {/* CỘT 1: CHỌN PLAYLIST */}
           <div className="w-full lg:w-64 flex flex-col gap-4 shrink-0 border-b lg:border-b-0 lg:border-r border-white/5 pb-4 lg:pb-0 lg:pr-6">
             <div className="flex items-center justify-between">
-              <h3 className="text-[10px] font-black text-white/40 uppercase tracking-widest">Danh sách phát</h3>
+              <h3 className="text-[10px] font-black text-white/40 uppercase tracking-widest">Danh sách phát của bạn</h3>
               <span className="text-[10px] bg-white/5 px-2 py-0.5 rounded-full text-white/20 font-bold">{playlists.length}</span>
             </div>
             
             <form onSubmit={handleCreate} className="relative shrink-0">
               <input
                 type="text"
-                placeholder="Tạo Playlist mới..."
+                placeholder="Tên Playlist..."
                 value={newPlaylistName}
                 onChange={(e) => setNewPlaylistName(e.target.value)}
                 className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all font-bold placeholder:text-white/20"
@@ -146,7 +176,7 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
                   onClick={() => setSelectedPlaylistId(p.id)}
                   className={`group flex items-center justify-between p-4 rounded-2xl cursor-pointer transition-all border ${
                     selectedPlaylistId === p.id 
-                      ? 'bg-indigo-600 border-indigo-400 text-white shadow-xl translate-x-1' 
+                      ? 'bg-indigo-600 border-indigo-400 text-white shadow-xl shadow-indigo-500/20 translate-x-1' 
                       : 'hover:bg-white/5 border-transparent text-white/60'
                   }`}
                 >
@@ -158,16 +188,19 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
                   </div>
                   <button 
                     onClick={(e) => { e.stopPropagation(); onDeletePlaylist(p.id); }}
-                    className={`p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-red-500/20 hover:text-red-400 transition-all`}
+                    className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-red-500/20 hover:text-red-400 transition-all"
                   >
                     <Trash2 size={14} />
                   </button>
                 </div>
               ))}
+              {playlists.length === 0 && (
+                <p className="text-[10px] text-center text-white/10 font-bold italic py-10 uppercase tracking-widest">Chưa có playlist nào</p>
+              )}
             </div>
           </div>
 
-          {/* COLUMN 2: LIBRARY SOURCE (The "Pick" column) */}
+          {/* CỘT 2: THƯ VIỆN (NGUỒN) */}
           <div className="flex-1 flex flex-col gap-4 overflow-hidden border-b lg:border-b-0 lg:border-r border-white/5 pb-4 lg:pb-0 lg:pr-6">
             <div className="flex items-center justify-between shrink-0">
               <h3 className="text-[10px] font-black text-white/40 uppercase tracking-widest flex items-center gap-2">
@@ -176,51 +209,50 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
               <div className="relative">
                 <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/20" />
                 <input 
-                  type="text" placeholder="Tìm bài hát..." value={searchSong}
+                  type="text" placeholder="Tìm nhạc..." value={searchSong}
                   onChange={(e) => setSearchSong(e.target.value)}
-                  className="bg-white/5 border border-white/10 rounded-lg py-1.5 pl-8 pr-3 text-[10px] focus:outline-none focus:ring-1 focus:ring-indigo-500 font-bold w-32 sm:w-48"
+                  className="bg-white/5 border border-white/10 rounded-lg py-1.5 pl-8 pr-3 text-[10px] focus:outline-none focus:ring-1 focus:ring-indigo-500 font-bold w-32 sm:w-44"
                 />
               </div>
             </div>
 
-            {/* Bulk Actions Bar */}
-            <div className="flex items-center justify-between px-2 py-1 bg-white/5 rounded-xl border border-white/5 shrink-0">
+            <div className="flex items-center justify-between px-2 py-1.5 bg-white/5 rounded-xl border border-white/5 shrink-0">
               <button 
                 onClick={selectAllFiltered}
-                className="text-[9px] font-black uppercase text-white/40 hover:text-white flex items-center gap-2 px-2 py-1"
+                className="text-[9px] font-black uppercase text-white/30 hover:text-white flex items-center gap-2 px-2"
               >
-                {selectedSongIds.size === filteredLibrary.length ? <CheckSquare size={14} /> : <Square size={14} />}
+                {selectedLibrarySongIds.size === filteredLibrary.length && filteredLibrary.length > 0 ? <CheckSquare size={14} className="text-indigo-400" /> : <Square size={14} />}
                 Chọn tất cả
               </button>
               
-              {selectedSongIds.size > 0 && (
+              {selectedLibrarySongIds.size > 0 && (
                 <button 
                   onClick={addSelectedToPlaylist}
-                  className="bg-indigo-500 text-white text-[9px] font-black uppercase px-4 py-1.5 rounded-lg flex items-center gap-2 hover:bg-indigo-400 transition-all animate-in zoom-in-95"
+                  className="bg-indigo-500 text-white text-[9px] font-black uppercase px-4 py-1.5 rounded-lg flex items-center gap-2 hover:bg-indigo-400 transition-all shadow-lg"
                 >
                   <CopyPlus size={14} />
-                  Thêm {selectedSongIds.size} bài
+                  Nạp {selectedLibrarySongIds.size} bài
                 </button>
               )}
             </div>
 
             <div className="flex-1 overflow-y-auto space-y-2 pr-2 scrollbar-hide">
               {filteredLibrary.map(song => {
-                const isSelected = selectedSongIds.has(song.id);
+                const isSelected = selectedLibrarySongIds.has(song.id);
                 const isAlreadyInPlaylist = selectedPlaylist?.songIds.includes(song.id);
                 
                 return (
                   <div 
                     key={song.id} 
                     draggable="true"
-                    onDragStart={(e) => handleDragStart(e, song.id)}
+                    onDragStart={(e) => handleLibraryDragStart(e, song.id)}
                     className={`flex items-center gap-3 p-3 rounded-2xl transition-all border group cursor-grab active:cursor-grabbing ${
                       isSelected ? 'bg-indigo-500/10 border-indigo-500/50' : 'bg-white/5 border-white/5 hover:border-white/20'
-                    } ${isAlreadyInPlaylist ? 'opacity-50' : ''}`}
-                    onClick={() => !isAlreadyInPlaylist && toggleSelectSong(song.id)}
+                    } ${isAlreadyInPlaylist ? 'opacity-40 select-none grayscale-[0.5]' : ''}`}
+                    onClick={() => !isAlreadyInPlaylist && toggleSelectLibrarySong(song.id)}
                   >
                     <div className="shrink-0 text-indigo-400">
-                      {isAlreadyInPlaylist ? <Check size={16} /> : (isSelected ? <CheckSquare size={16} /> : <Square size={16} className="opacity-20 group-hover:opacity-100" />)}
+                      {isAlreadyInPlaylist ? <CheckCircle2 size={16} /> : (isSelected ? <CheckSquare size={16} /> : <Square size={16} className="opacity-10 group-hover:opacity-40" />)}
                     </div>
                     <div className="w-10 h-10 rounded-xl overflow-hidden shadow-lg shrink-0">
                       <img src={song.coverUrl} className="w-full h-full object-cover" alt="" />
@@ -229,26 +261,17 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
                       <p className="text-xs font-black truncate">{song.title}</p>
                       <p className="text-[9px] text-white/30 uppercase font-black truncate">{song.artist}</p>
                     </div>
-                    <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-all">
-                      <GripVertical size={14} className="text-white/20" />
-                    </div>
                   </div>
                 );
               })}
-              {filteredLibrary.length === 0 && (
-                <div className="py-20 text-center opacity-20">
-                  <Music size={40} className="mx-auto mb-3" />
-                  <p className="text-xs font-black uppercase tracking-widest">Trống</p>
-                </div>
-              )}
             </div>
           </div>
 
-          {/* COLUMN 3: PLAYLIST CONTENT (The "Result" column) */}
+          {/* CỘT 3: NỘI DUNG PLAYLIST (ĐÍCH ĐẾN & SẮP XẾP) */}
           <div className="flex-1 flex flex-col gap-4 overflow-hidden">
              <div className="flex items-center justify-between shrink-0 px-2">
                 <h3 className="text-[10px] font-black text-indigo-400 uppercase tracking-widest flex items-center gap-2">
-                  <Sparkles size={12} /> Bài hát trong Playlist
+                  <Sparkles size={12} /> {selectedPlaylist ? selectedPlaylist.name : 'Nội dung Playlist'}
                 </h3>
                 {selectedPlaylist && selectedPlaylist.songIds.length > 0 && (
                   <button 
@@ -261,11 +284,11 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
              </div>
 
              <div 
-               onDragOver={(e) => { e.preventDefault(); setIsDraggingOver(true); }}
-               onDragLeave={() => setIsDraggingOver(false)}
-               onDrop={handleDrop}
+               onDragOver={(e) => { e.preventDefault(); setIsDraggingOverTarget(true); }}
+               onDragLeave={() => setIsDraggingOverTarget(false)}
+               onDrop={handleDropOnPlaylist}
                className={`flex-1 rounded-[2.5rem] p-4 sm:p-6 transition-all flex flex-col gap-2 overflow-y-auto scrollbar-hide relative border-2 border-dashed ${
-                 isDraggingOver ? 'bg-indigo-500/20 border-indigo-400 shadow-[0_0_50px_rgba(99,102,241,0.2)]' : 'border-white/5 bg-white/[0.02]'
+                 isDraggingOverTarget ? 'bg-indigo-500/20 border-indigo-400 shadow-[0_0_50px_rgba(99,102,241,0.2)]' : 'border-white/5 bg-white/[0.02]'
                }`}
              >
                 {selectedPlaylist ? (
@@ -275,16 +298,27 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
                         <div className="w-16 h-16 rounded-full border-2 border-dashed border-white flex items-center justify-center mb-2">
                            <ArrowRight size={24} className="rotate-90 lg:rotate-0" />
                         </div>
-                        <p className="text-[10px] font-black uppercase tracking-[0.3em]">Chọn bài hát từ thư viện để thêm vào đây</p>
+                        <p className="text-[10px] font-black uppercase tracking-[0.3em]">Kéo nhạc từ thư viện thả vào đây để bắt đầu</p>
                       </div>
                     ) : (
                       selectedPlaylist.songIds.map((sid, index) => {
                         const song = songs.find(s => s.id === sid);
                         if (!song) return null;
                         return (
-                          <div key={sid} className="flex items-center justify-between p-3 rounded-2xl bg-white/5 group border border-transparent hover:border-white/10 transition-all hover:bg-white/[0.07] animate-in slide-in-from-right-4 duration-300">
+                          <div 
+                            key={`${sid}-${index}`} 
+                            draggable="true"
+                            onDragStart={() => handlePlaylistDragStart(index)}
+                            onDragOver={(e) => handlePlaylistDragOver(e, index)}
+                            className={`flex items-center justify-between p-3 rounded-2xl bg-white/5 group border border-transparent hover:border-indigo-500/30 transition-all hover:bg-white/[0.07] ${
+                              draggedItemIndex === index ? 'opacity-20 scale-95' : 'opacity-100'
+                            }`}
+                          >
                             <div className="flex items-center gap-4 min-w-0">
-                              <span className="text-[9px] font-black text-white/10 w-4">{index + 1}</span>
+                              <div className="flex flex-col items-center gap-1">
+                                <span className="text-[9px] font-black text-white/10">{index + 1}</span>
+                                <GripVertical size={12} className="text-white/10 group-hover:text-indigo-400 cursor-ns-resize" />
+                              </div>
                               <div className="w-10 h-10 rounded-xl overflow-hidden shadow-lg shrink-0"><img src={song.coverUrl} className="w-full h-full object-cover" alt="" /></div>
                               <div className="min-w-0">
                                  <p className="text-[11px] font-bold truncate">{song.title}</p>
@@ -293,7 +327,7 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
                             </div>
                             <button 
                               onClick={() => onRemoveFromPlaylist(selectedPlaylist.id, sid)} 
-                              className="p-2 text-white/10 hover:text-red-400 transition-all opacity-0 group-hover:opacity-100"
+                              className="p-2 text-white/5 hover:text-red-400 transition-all opacity-0 group-hover:opacity-100"
                             >
                               <Trash2 size={14} />
                             </button>
@@ -305,7 +339,7 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
                 ) : (
                   <div className="absolute inset-0 flex flex-col items-center justify-center opacity-20 gap-4">
                     <ListMusic size={40} />
-                    <p className="text-xs font-black uppercase tracking-widest">Chọn một Playlist</p>
+                    <p className="text-xs font-black uppercase tracking-widest italic">Chọn một Playlist để quản lý</p>
                   </div>
                 )}
              </div>
