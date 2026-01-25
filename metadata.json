@@ -1,0 +1,7 @@
+{
+  "name": "Aura AI Music Player",
+  "description": "A high-end, futuristic music player featuring AI-powered mood recommendations, dynamic D3.js audio visualization, and a smart AI DJ assistant using Gemini.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
