@@ -3,7 +3,7 @@ import React, { useState, useMemo } from 'react';
 import { 
   Plus, Trash2, Music, ListMusic, X, Search, CheckCircle2, GripVertical, 
   Sparkles, ArrowRight, Library, Play, Check, Square, CheckSquare, 
-  CopyPlus, ChevronRight, ArrowUpDown
+  CopyPlus, ChevronRight, ArrowUpDown, SortAsc, SortDesc
 } from 'lucide-react';
 import { Playlist, Song } from '../types';
 
@@ -84,6 +84,20 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
     if ('vibrate' in navigator) navigator.vibrate([30, 50, 30]);
   };
 
+  const handleSortPlaylist = (type: 'title' | 'artist') => {
+    if (!selectedPlaylistId || !selectedPlaylist) return;
+    const sortedIds = [...selectedPlaylist.songIds].sort((a, b) => {
+      const sA = songs.find(s => s.id === a);
+      const sB = songs.find(s => s.id === b);
+      if (!sA || !sB) return 0;
+      return type === 'title' 
+        ? sA.title.localeCompare(sB.title)
+        : sA.artist.localeCompare(sB.artist);
+    });
+    onReorderPlaylist(selectedPlaylistId, sortedIds);
+    if ('vibrate' in navigator) navigator.vibrate(20);
+  };
+
   // Kéo từ Thư viện thả vào Playlist
   const handleLibraryDragStart = (e: React.DragEvent, songId: string) => {
     e.dataTransfer.setData('source', 'library');
@@ -152,7 +166,7 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
           {/* CỘT 1: CHỌN PLAYLIST */}
           <div className="w-full lg:w-64 flex flex-col gap-4 shrink-0 border-b lg:border-b-0 lg:border-r border-white/5 pb-4 lg:pb-0 lg:pr-6">
             <div className="flex items-center justify-between">
-              <h3 className="text-[10px] font-black text-white/40 uppercase tracking-widest">Danh sách phát của bạn</h3>
+              <h3 className="text-[10px] font-black text-white/40 uppercase tracking-widest">Danh sách phát</h3>
               <span className="text-[10px] bg-white/5 px-2 py-0.5 rounded-full text-white/20 font-bold">{playlists.length}</span>
             </div>
             
@@ -194,9 +208,6 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
                   </button>
                 </div>
               ))}
-              {playlists.length === 0 && (
-                <p className="text-[10px] text-center text-white/10 font-bold italic py-10 uppercase tracking-widest">Chưa có playlist nào</p>
-              )}
             </div>
           </div>
 
@@ -236,7 +247,7 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
               )}
             </div>
 
-            <div className="flex-1 overflow-y-auto space-y-2 pr-2 scrollbar-hide">
+            <div className="flex-1 overflow-y-auto space-y-2 pr-2">
               {filteredLibrary.map(song => {
                 const isSelected = selectedLibrarySongIds.has(song.id);
                 const isAlreadyInPlaylist = selectedPlaylist?.songIds.includes(song.id);
@@ -274,12 +285,21 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
                   <Sparkles size={12} /> {selectedPlaylist ? selectedPlaylist.name : 'Nội dung Playlist'}
                 </h3>
                 {selectedPlaylist && selectedPlaylist.songIds.length > 0 && (
-                  <button 
-                    onClick={() => onSelectPlaylist(selectedPlaylist)}
-                    className="flex items-center gap-2 px-6 py-2 bg-white text-black rounded-xl text-[9px] font-black uppercase tracking-widest hover:scale-105 active:scale-95 transition-all shadow-xl"
-                  >
-                    Nghe ngay <Play size={10} fill="currentColor" />
-                  </button>
+                  <div className="flex gap-1">
+                    <button 
+                      onClick={() => handleSortPlaylist('title')}
+                      title="Sắp xếp theo tên"
+                      className="p-2 bg-white/5 text-white/40 rounded-lg hover:text-indigo-400 transition-all"
+                    >
+                      <SortAsc size={16} />
+                    </button>
+                    <button 
+                      onClick={() => onSelectPlaylist(selectedPlaylist)}
+                      className="flex items-center gap-2 px-6 py-2 bg-white text-black rounded-xl text-[9px] font-black uppercase tracking-widest hover:scale-105 active:scale-95 transition-all shadow-xl ml-2"
+                    >
+                      Phát <Play size={10} fill="currentColor" />
+                    </button>
+                  </div>
                 )}
              </div>
 
@@ -287,7 +307,7 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
                onDragOver={(e) => { e.preventDefault(); setIsDraggingOverTarget(true); }}
                onDragLeave={() => setIsDraggingOverTarget(false)}
                onDrop={handleDropOnPlaylist}
-               className={`flex-1 rounded-[2.5rem] p-4 sm:p-6 transition-all flex flex-col gap-2 overflow-y-auto scrollbar-hide relative border-2 border-dashed ${
+               className={`flex-1 rounded-[2.5rem] p-4 sm:p-6 transition-all flex flex-col gap-2 overflow-y-auto relative border-2 border-dashed ${
                  isDraggingOverTarget ? 'bg-indigo-500/20 border-indigo-400 shadow-[0_0_50px_rgba(99,102,241,0.2)]' : 'border-white/5 bg-white/[0.02]'
                }`}
              >
@@ -295,10 +315,8 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
                   <>
                     {selectedPlaylist.songIds.length === 0 ? (
                       <div className="absolute inset-0 flex flex-col items-center justify-center opacity-10 gap-4 pointer-events-none text-center px-10">
-                        <div className="w-16 h-16 rounded-full border-2 border-dashed border-white flex items-center justify-center mb-2">
-                           <ArrowRight size={24} className="rotate-90 lg:rotate-0" />
-                        </div>
-                        <p className="text-[10px] font-black uppercase tracking-[0.3em]">Kéo nhạc từ thư viện thả vào đây để bắt đầu</p>
+                        <ArrowRight size={24} className="rotate-90 lg:rotate-0" />
+                        <p className="text-[10px] font-black uppercase tracking-[0.3em]">Kéo nhạc thả vào đây</p>
                       </div>
                     ) : (
                       selectedPlaylist.songIds.map((sid, index) => {
@@ -339,7 +357,7 @@ const PlaylistManager: React.FC<PlaylistManagerProps> = ({
                 ) : (
                   <div className="absolute inset-0 flex flex-col items-center justify-center opacity-20 gap-4">
                     <ListMusic size={40} />
-                    <p className="text-xs font-black uppercase tracking-widest italic">Chọn một Playlist để quản lý</p>
+                    <p className="text-xs font-black uppercase tracking-widest italic">Chọn một Playlist</p>
                   </div>
                 )}
              </div>

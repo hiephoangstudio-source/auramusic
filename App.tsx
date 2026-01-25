@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { 
-  Play, Pause, SkipBack, SkipForward, Search, Waves, List, RefreshCw, Upload, Trash2, Globe, ExternalLink, Sparkles, X, Loader2, AlertCircle, Key, Music2, Download, Copy, Check, Info, FileJson, Share, PlusCircle, HelpCircle, FolderHeart, ChevronLeft, Settings2, MoreVertical
+  Play, Pause, SkipBack, SkipForward, Search, Waves, List, RefreshCw, Upload, Trash2, Globe, ExternalLink, Sparkles, X, Loader2, AlertCircle, Key, Music2, Download, Copy, Check, Info, FileJson, Share, PlusCircle, HelpCircle, FolderHeart, ChevronLeft, Settings2, MoreVertical, ArrowUpDown, SortAsc, SortDesc
 } from 'lucide-react';
 import { MOCK_PLAYLIST } from './constants';
 import { Song, PlayerState, Playlist } from './types';
@@ -33,7 +33,6 @@ const App: React.FC = () => {
   const [activeQueueIds, setActiveQueueIds] = useState<string[]>([]);
   
   const [isLibraryLoading, setIsLibraryLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<'ai' | 'lyrics' | 'story'>('ai');
   const [showLibrary, setShowLibrary] = useState(true);
   const [showPlaylistStudio, setShowPlaylistStudio] = useState(false);
@@ -130,6 +129,22 @@ const App: React.FC = () => {
     if (viewingPlaylistId === playlistId) {
       setActiveQueueIds(newSongIds);
     }
+  };
+
+  const handleQuickSort = (playlistId: string, type: 'title' | 'artist') => {
+    const pl = playlists.find(p => p.id === playlistId);
+    if (!pl) return;
+    
+    const sortedIds = [...pl.songIds].sort((a, b) => {
+      const sA = library.find(s => s.id === a);
+      const sB = library.find(s => s.id === b);
+      if (!sA || !sB) return 0;
+      return type === 'title' 
+        ? sA.title.localeCompare(sB.title)
+        : sA.artist.localeCompare(sB.artist);
+    });
+    
+    handleReorderPlaylist(playlistId, sortedIds);
   };
 
   const startPlayingQueue = (ids: string[], startIndex: number) => {
@@ -256,12 +271,21 @@ const App: React.FC = () => {
           <div className="flex items-center justify-between">
             <div className="min-w-0">
               <h2 className="text-xl font-black truncate uppercase tracking-tighter italic">{isAll ? "Tất cả bài hát" : targetPlaylist?.name}</h2>
-              <p className="text-[9px] text-white/30 font-black uppercase tracking-[0.2em]">{displaySongs.length} bài hát trong danh sách</p>
+              <p className="text-[9px] text-white/30 font-black uppercase tracking-[0.2em]">{displaySongs.length} bài hát</p>
             </div>
             {!isAll && (
-              <button onClick={() => setShowPlaylistStudio(true)} className="p-2 bg-indigo-500/10 text-indigo-400 rounded-lg hover:bg-indigo-500 hover:text-white transition-all">
-                <Settings2 size={16} />
-              </button>
+              <div className="flex gap-1">
+                <button 
+                  onClick={() => handleQuickSort(viewingPlaylistId!, 'title')} 
+                  title="Sắp xếp theo tên"
+                  className="p-2 bg-white/5 text-white/40 rounded-lg hover:bg-white/10 hover:text-indigo-400 transition-all"
+                >
+                  <SortAsc size={16} />
+                </button>
+                <button onClick={() => setShowPlaylistStudio(true)} className="p-2 bg-indigo-500/10 text-indigo-400 rounded-lg hover:bg-indigo-500 hover:text-white transition-all">
+                  <Settings2 size={16} />
+                </button>
+              </div>
             )}
           </div>
         </div>
@@ -332,8 +356,8 @@ const App: React.FC = () => {
               <h3 className="text-2xl font-black uppercase tracking-tighter italic mb-4">Hướng dẫn Aura</h3>
               <div className="space-y-4 text-left mb-10">
                  <div className="p-4 bg-white/5 rounded-2xl flex gap-4">
-                    <div className="p-2 bg-indigo-500/20 rounded-lg h-fit"><Music2 size={16} className="text-indigo-400" /></div>
-                    <p className="text-[10px] text-white/60 font-medium leading-relaxed uppercase tracking-wider">Chọn Playlist trong Thư viện để xem danh sách nhạc riêng của nó. Bạn có thể kéo sắp xếp lại thứ tự bài hát trong Playlist Studio.</p>
+                    <div className="p-2 bg-indigo-500/20 rounded-lg h-fit"><ArrowUpDown size={16} className="text-indigo-400" /></div>
+                    <p className="text-[10px] text-white/60 font-medium leading-relaxed uppercase tracking-wider">Bấm vào biểu tượng Sort cạnh Playlist để sắp xếp nhanh theo tên. Kéo thả để thay đổi vị trí thủ công.</p>
                  </div>
               </div>
               <button onClick={() => setShowHelpModal(false)} className="px-10 py-3 bg-white text-black rounded-2xl text-[10px] font-black uppercase tracking-widest hover:scale-105 active:scale-95 transition-all">Đã hiểu</button>
@@ -366,7 +390,7 @@ const App: React.FC = () => {
       </header>
 
       <div className="flex-1 flex overflow-hidden relative">
-        {/* Sidebar Re-imagined */}
+        {/* Sidebar */}
         <aside className={`glass border-r border-white/5 transition-all duration-500 flex flex-col ${showLibrary ? 'w-full sm:w-80 opacity-100 absolute sm:relative z-40 h-full' : 'w-0 opacity-0 overflow-hidden'}`}>
           {renderSidebarContent()}
         </aside>
