@@ -36,6 +36,7 @@ const App: React.FC = () => {
   const [isStoryLoading, setIsStoryLoading] = useState(false);
   const [globalError, setGlobalError] = useState<{code: string, message?: string} | null>(null);
   const [showSyncModal, setShowSyncModal] = useState(false);
+  const [generatedSyncCode, setGeneratedSyncCode] = useState<string | null>(null);
   const [copySuccess, setCopySuccess] = useState(false);
   
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -51,12 +52,10 @@ const App: React.FC = () => {
         const metadata = await getLibraryMetadata();
         
         if (!initialized) {
-          // First run: load mock playlist
           setLibrary(MOCK_PLAYLIST);
           await saveLibraryMetadata(MOCK_PLAYLIST);
           await markLibraryInitialized();
         } else {
-          // Returning user: load from DB (even if empty)
           const loadedSongs: Song[] = [];
           for (const song of metadata) {
             if (song.id.startsWith('user')) {
@@ -200,24 +199,28 @@ const App: React.FC = () => {
   }, [library, searchQuery]);
 
   const exportSyncData = () => {
+    // Chỉ đồng bộ các bài hát online (vì các bài upload local có dung lượng rất lớn khó đồng bộ qua text)
     const data = JSON.stringify(library.filter(s => !s.id.startsWith('user')));
-    navigator.clipboard.writeText(btoa(unescape(encodeURIComponent(data))));
+    const code = btoa(unescape(encodeURIComponent(data)));
+    setGeneratedSyncCode(code);
+    navigator.clipboard.writeText(code);
     setCopySuccess(true);
     setTimeout(() => setCopySuccess(false), 2000);
   };
 
   const importSyncData = async () => {
-    const code = prompt("Dán mã đồng bộ vào đây:");
+    const code = prompt("Dán mã đồng bộ vào đây (Mã bạn đã xuất từ thiết bị khác):");
     if (!code) return;
     try {
-      const data = JSON.parse(decodeURIComponent(escape(atob(code))));
+      const data = JSON.parse(decodeURIComponent(escape(atob(code.trim()))));
       if (Array.isArray(data)) {
         setLibrary(data);
         await saveLibraryMetadata(data);
-        alert("Đồng bộ thành công!");
+        alert("Đồng bộ thư viện thành công!");
+        setShowSyncModal(false);
       }
     } catch (e) {
-      alert("Mã đồng bộ không hợp lệ.");
+      alert("Mã đồng bộ không hợp lệ hoặc đã bị lỗi.");
     }
   };
 
@@ -234,7 +237,7 @@ const App: React.FC = () => {
       {/* Sync Modal Overlay */}
       {showSyncModal && (
         <div className="absolute inset-0 z-[110] bg-black/80 backdrop-blur-xl flex items-center justify-center p-6 animate-in fade-in duration-300">
-           <div className="glass max-w-md w-full p-10 rounded-[3rem] border-indigo-500/20 text-center space-y-8">
+           <div className="glass max-w-lg w-full p-8 sm:p-10 rounded-[3rem] border-indigo-500/20 text-center space-y-8">
               <div className="w-16 h-16 bg-indigo-500/10 rounded-full flex items-center justify-center mx-auto text-indigo-400">
                 <RefreshCw size={32} />
               </div>
@@ -242,13 +245,14 @@ const App: React.FC = () => {
                 <h3 className="text-xl font-black uppercase tracking-widest mb-2">Đồng bộ thư viện</h3>
                 <p className="text-[10px] text-white/40 uppercase font-bold tracking-widest leading-relaxed">Xuất mã đồng bộ từ máy tính và nhập vào điện thoại để mang âm nhạc đi bất cứ đâu.</p>
               </div>
+              
               <div className="grid grid-cols-2 gap-4">
                 <button 
                   onClick={exportSyncData}
                   className="py-4 bg-white/5 hover:bg-white/10 rounded-2xl flex flex-col items-center gap-3 transition-all group"
                 >
-                  {copySuccess ? <Check className="text-green-400" /> : <Copy className="text-indigo-400 group-hover:scale-110 transition-transform" />}
-                  <span className="text-[9px] font-black uppercase tracking-widest">{copySuccess ? "Đã sao chép" : "Xuất mã"}</span>
+                  <Copy className="text-indigo-400 group-hover:scale-110 transition-transform" />
+                  <span className="text-[9px] font-black uppercase tracking-widest">Xuất mã mới</span>
                 </button>
                 <button 
                   onClick={importSyncData}
@@ -258,7 +262,40 @@ const App: React.FC = () => {
                   <span className="text-[9px] font-black uppercase tracking-widest">Nhập mã</span>
                 </button>
               </div>
-              <button onClick={() => setShowSyncModal(false)} className="text-[9px] text-white/20 uppercase font-black tracking-widest hover:text-white transition-colors">Đóng cửa sổ</button>
+
+              {generatedSyncCode && (
+                <div className="space-y-4 animate-in slide-in-from-top-4 duration-500">
+                  <div className="text-left">
+                    <p className="text-[9px] font-black uppercase tracking-widest text-indigo-400/60 mb-2 px-2">Mã đồng bộ của bạn:</p>
+                    <div className="relative group">
+                      <textarea 
+                        readOnly 
+                        value={generatedSyncCode}
+                        className="w-full h-24 bg-black/40 border border-white/10 rounded-2xl p-4 text-[10px] font-mono text-white/60 focus:outline-none resize-none scrollbar-hide"
+                      />
+                      <button 
+                        onClick={() => {
+                          navigator.clipboard.writeText(generatedSyncCode);
+                          setCopySuccess(true);
+                          setTimeout(() => setCopySuccess(false), 2000);
+                        }}
+                        className="absolute bottom-3 right-3 p-2 bg-indigo-500 text-white rounded-lg hover:scale-105 active:scale-95 transition-all flex items-center gap-2 shadow-lg"
+                      >
+                        {copySuccess ? <Check size={12} /> : <Copy size={12} />}
+                        <span className="text-[8px] font-bold uppercase">{copySuccess ? "Đã chép" : "Sao chép"}</span>
+                      </button>
+                    </div>
+                  </div>
+                  <p className="text-[9px] text-white/30 italic font-medium">Lưu ý: Chỉ đồng bộ danh sách bài hát Online, không bao gồm file nhạc đã Upload từ máy.</p>
+                </div>
+              )}
+
+              <button 
+                onClick={() => { setShowSyncModal(false); setGeneratedSyncCode(null); }} 
+                className="text-[9px] text-white/20 uppercase font-black tracking-widest hover:text-white transition-colors pt-2"
+              >
+                Đóng cửa sổ
+              </button>
            </div>
         </div>
       )}
@@ -292,7 +329,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Header */}
       <header className="p-4 flex items-center justify-between z-30 bg-opacity-80 backdrop-blur-lg border-b border-white/5">
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2">
