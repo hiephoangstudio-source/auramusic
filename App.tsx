@@ -3,7 +3,7 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { 
   Play, Pause, SkipBack, SkipForward, Volume2, 
   Repeat, Shuffle, Search, Heart, ListMusic, 
-  Music2, Repeat1, Waves, List, RefreshCw, Upload, Music, Trash2, Globe, ExternalLink, Sparkles, X, Loader2
+  Music2, Repeat1, Waves, List, RefreshCw, Upload, Music, Trash2, Globe, ExternalLink, Sparkles, X, Loader2, AlertCircle, Key
 } from 'lucide-react';
 import { MOCK_PLAYLIST } from './constants';
 import { Song, PlayerState, Playlist } from './types';
@@ -34,24 +34,22 @@ const App: React.FC = () => {
   
   const [activeTab, setActiveTab] = useState<'ai' | 'lyrics' | 'story'>('ai');
   const [showLibrary, setShowLibrary] = useState(true);
-  const [favorites, setFavorites] = useState<string[]>([]);
   const [insight, setInsight] = useState<string | null>(null);
   const [songStory, setSongStory] = useState<string | null>(null);
   const [isStoryLoading, setIsStoryLoading] = useState(false);
+  const [globalError, setGlobalError] = useState<{code: string, message?: string} | null>(null);
   
   const audioRef = useRef<HTMLAudioElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
 
-  // Load Library - Ưu tiên IndexedDB để chạy tốt trên di động
   useEffect(() => {
     const loadLibrary = async () => {
       setIsLibraryLoading(true);
       try {
         const metadata = await getLibraryMetadata();
         if (metadata.length === 0) {
-          // Fallback to MOCK
           setLibrary(MOCK_PLAYLIST);
           await saveLibraryMetadata(MOCK_PLAYLIST);
         } else {
@@ -76,7 +74,6 @@ const App: React.FC = () => {
     loadLibrary();
   }, []);
 
-  // Persist Helper
   const syncStorage = async (lib: Song[]) => {
     await saveLibraryMetadata(lib);
   };
@@ -86,8 +83,21 @@ const App: React.FC = () => {
     setIsSearchingOnline(true);
     setOnlineResults([]); 
     const results = await searchMusicOnline(searchQuery);
-    setOnlineResults(results);
+    if (results && results.error) {
+      setGlobalError(results);
+    } else {
+      setOnlineResults(results);
+      setGlobalError(null);
+    }
     setIsSearchingOnline(false);
+  };
+
+  const handleOpenKeySelection = async () => {
+    if ((window as any).aistudio?.openSelectKey) {
+      await (window as any).aistudio.openSelectKey();
+      setGlobalError(null);
+      // Optional: Refresh data here
+    }
   };
 
   const currentSong = useMemo(() => {
@@ -97,7 +107,6 @@ const App: React.FC = () => {
 
   const handlePlaySong = (song: Song | OnlineSongResult) => {
     const existingIdx = library.findIndex(s => s.title === song.title && s.artist === song.artist);
-    
     if (existingIdx !== -1) {
       setPlayerState(s => ({ ...s, currentSongIndex: existingIdx, isPlaying: true, currentTime: 0 }));
     } else {
@@ -111,7 +120,6 @@ const App: React.FC = () => {
         duration: 0,
         color: "#6366f1"
       };
-      
       const nextLib = [...library, newTrack];
       setLibrary(nextLib);
       setPlayerState(s => ({ ...s, currentSongIndex: nextLib.length - 1, isPlaying: true, currentTime: 0 }));
@@ -123,26 +131,16 @@ const App: React.FC = () => {
   const handleDeleteSong = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!window.confirm("Xóa bài hát này?")) return;
-
-    // Xóa triệt để
     await deleteSongBlob(id);
-
     const indexToDelete = library.findIndex(s => s.id === id);
     const newLib = library.filter(s => s.id !== id);
-    
     setLibrary(newLib);
     await syncStorage(newLib);
-
     setPlayerState(s => {
       let nextIndex = s.currentSongIndex;
       if (indexToDelete === s.currentSongIndex) nextIndex = 0;
       else if (indexToDelete < s.currentSongIndex) nextIndex = Math.max(0, s.currentSongIndex - 1);
-      
-      return { 
-        ...s, 
-        currentSongIndex: nextIndex, 
-        isPlaying: indexToDelete === s.currentSongIndex ? false : s.isPlaying 
-      };
+      return { ...s, currentSongIndex: nextIndex, isPlaying: indexToDelete === s.currentSongIndex ? false : s.isPlaying };
     });
   };
 
@@ -175,10 +173,17 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (currentSong) {
-      getSongInsight(currentSong.title, currentSong.artist).then(setInsight);
+      getSongInsight(currentSong.title, currentSong.artist).then(res => {
+        if (res && res.error) setGlobalError(res);
+        else setInsight(res);
+      });
       if (activeTab === 'story') {
         setIsStoryLoading(true);
-        getSongStory(currentSong.title, currentSong.artist).then(s => { setSongStory(s); setIsStoryLoading(false); });
+        getSongStory(currentSong.title, currentSong.artist).then(res => {
+          if (res && res.error) setGlobalError(res);
+          else setSongStory(res);
+          setIsStoryLoading(false);
+        });
       }
     }
   }, [currentSong?.id, activeTab]);
@@ -192,13 +197,50 @@ const App: React.FC = () => {
   }, [library, searchQuery]);
 
   return (
-    <div className={`h-screen flex flex-col ${playerState.theme === 'dark' ? 'bg-[#050505] text-white' : 'bg-gray-100 text-black'} font-sans select-none overflow-hidden`}>
+    <div className={`h-screen flex flex-col ${playerState.theme === 'dark' ? 'bg-[#050505] text-white' : 'bg-gray-100 text-black'} font-sans select-none overflow-hidden relative`}>
       {currentSong && (
         <audio 
           ref={audioRef} src={currentSong.audioUrl} crossOrigin="anonymous"
           onTimeUpdate={() => audioRef.current && setPlayerState(s => ({ ...s, currentTime: audioRef.current!.currentTime }))}
           onEnded={() => setPlayerState(s => ({ ...s, currentSongIndex: (s.currentSongIndex + 1) % library.length }))}
         />
+      )}
+
+      {/* Global Quota Error Overlay */}
+      {globalError && (globalError.code === 'QUOTA_EXCEEDED' || globalError.code === 'ENTITY_NOT_FOUND') && (
+        <div className="absolute inset-0 z-[100] bg-black/60 backdrop-blur-md flex items-center justify-center p-6 animate-in fade-in duration-500">
+           <div className="glass max-w-md w-full p-10 rounded-[3rem] border-indigo-500/20 text-center space-y-6">
+              <div className="w-20 h-20 bg-indigo-500/10 rounded-full flex items-center justify-center mx-auto text-indigo-400">
+                <AlertCircle size={40} />
+              </div>
+              <div>
+                <h3 className="text-xl font-black uppercase tracking-widest mb-2">Hết hạn mức AI</h3>
+                <p className="text-sm text-white/60 leading-relaxed">Bạn đã sử dụng hết hạn mức miễn phí của hệ thống. Để tiếp tục trải nghiệm không giới hạn, vui lòng sử dụng API Key cá nhân của bạn.</p>
+              </div>
+              <div className="space-y-3 pt-4">
+                <button 
+                  onClick={handleOpenKeySelection}
+                  className="w-full py-4 bg-indigo-500 hover:bg-indigo-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] transition-all shadow-xl shadow-indigo-500/20 flex items-center justify-center gap-3"
+                >
+                  <Key size={16} /> Sử dụng API Key cá nhân
+                </button>
+                <a 
+                  href="https://ai.google.dev/gemini-api/docs/billing" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="block text-[9px] text-white/30 uppercase font-bold tracking-widest hover:text-white transition-colors"
+                >
+                  Tìm hiểu về Billing & Quota
+                </a>
+                <button 
+                  onClick={() => setGlobalError(null)}
+                  className="text-[9px] text-white/20 uppercase font-bold tracking-widest hover:text-white pt-4"
+                >
+                  Đóng
+                </button>
+              </div>
+           </div>
+        </div>
       )}
 
       {/* Header */}

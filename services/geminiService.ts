@@ -2,6 +2,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Recommendation, Song } from "../types";
 
+// Always create a new instance right before use to ensure the latest API key from the environment/dialog is used.
 const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
 const PREVIEW_STREAM_URL = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3";
 
@@ -13,9 +14,19 @@ export interface OnlineSongResult {
   sourceUri?: string;
 }
 
+const handleApiError = (error: any) => {
+  console.error("Gemini API Error:", error);
+  if (error?.message?.toLowerCase().includes('quota') || error?.status === 429 || error?.message?.includes('429')) {
+    return { error: true, code: 'QUOTA_EXCEEDED' };
+  }
+  if (error?.message?.includes('Requested entity was not found')) {
+    return { error: true, code: 'ENTITY_NOT_FOUND' };
+  }
+  return { error: true, code: 'UNKNOWN_ERROR', message: error?.message };
+};
+
 const safeParseJSON = (text: string) => {
   try {
-    // Xử lý trường hợp AI trả về JSON bọc trong block code Markdown
     const cleanText = text.replace(/```json|```/g, "").trim();
     return JSON.parse(cleanText);
   } catch (e) {
@@ -24,7 +35,7 @@ const safeParseJSON = (text: string) => {
   }
 };
 
-export const searchMusicOnline = async (query: string): Promise<OnlineSongResult[]> => {
+export const searchMusicOnline = async (query: string): Promise<any> => {
   try {
     const ai = getAI();
     const response = await ai.models.generateContent({
@@ -51,16 +62,13 @@ export const searchMusicOnline = async (query: string): Promise<OnlineSongResult
 
     return safeParseJSON(response.text) || [];
   } catch (error) {
-    console.error("Online search error:", error);
-    return [];
+    return handleApiError(error);
   }
 };
 
-// Fixed: Added availableSongs parameter to match the caller in AIDJ.tsx
 export const getMoodRecommendation = async (mood: string, favorites?: string[], availableSongs?: Song[]): Promise<any> => {
   try {
     const ai = getAI();
-    // Providing context of available songs if needed
     const context = availableSongs && availableSongs.length > 0 
       ? `\nUser's existing library: ${availableSongs.slice(0, 10).map(s => `${s.title} by ${s.artist}`).join(', ')}.`
       : '';
@@ -101,28 +109,33 @@ export const getMoodRecommendation = async (mood: string, favorites?: string[], 
 
     return data ? { ...data, sources } : null;
   } catch (error: any) {
-    if (error?.message?.toLowerCase().includes('quota') || error?.status === 429) {
-      return { error: true, code: 'QUOTA_EXCEEDED' };
-    }
-    return null;
+    return handleApiError(error);
   }
 };
 
-export const getSongStory = async (title: string, artist: string): Promise<string> => {
-  const ai = getAI();
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: `Tell a 2-sentence story about song "${title}" by "${artist}" in Vietnamese.`,
-    config: { tools: [{ googleSearch: {} }] }
-  });
-  return response.text || "Âm nhạc kể câu chuyện của riêng nó.";
+export const getSongStory = async (title: string, artist: string): Promise<any> => {
+  try {
+    const ai = getAI();
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `Tell a 2-sentence story about song "${title}" by "${artist}" in Vietnamese.`,
+      config: { tools: [{ googleSearch: {} }] }
+    });
+    return response.text || "Âm nhạc kể câu chuyện của riêng nó.";
+  } catch (error) {
+    return handleApiError(error);
+  }
 };
 
-export const getSongInsight = async (title: string, artist: string): Promise<string> => {
-  const ai = getAI();
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: `One-line insight for "${title}" - "${artist}".`,
-  });
-  return response.text || "";
+export const getSongInsight = async (title: string, artist: string): Promise<any> => {
+  try {
+    const ai = getAI();
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `One-line insight for "${title}" - "${artist}".`,
+    });
+    return response.text || "";
+  } catch (error) {
+    return handleApiError(error);
+  }
 };
