@@ -23,7 +23,6 @@
       color: #ffffff;
       overflow-x: hidden;
       margin: 0;
-      /* Ngăn chặn kéo để tải lại trên mobile */
       overscroll-behavior-y: contain;
     }
     .font-syncopate {
@@ -34,27 +33,24 @@
       backdrop-filter: blur(12px);
       border: 1px solid rgba(255, 255, 255, 0.05);
     }
-    .active-gradient {
-      background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
-    }
     
-    /* Cải thiện thanh cuộn - To hơn và dễ nắm bắt hơn */
+    /* Cải thiện thanh cuộn - To hơn hẳn và nổi bật */
     ::-webkit-scrollbar {
-      width: 10px;
+      width: 14px; /* Tăng chiều rộng để dễ nắm */
     }
     ::-webkit-scrollbar-track {
-      background: rgba(0, 0, 0, 0.2);
+      background: rgba(0, 0, 0, 0.4);
+      border-radius: 10px;
     }
     ::-webkit-scrollbar-thumb {
-      background: rgba(99, 102, 241, 0.3);
+      background: rgba(99, 102, 241, 0.4); /* Màu Indigo đặc trưng của Aura */
       border-radius: 10px;
-      border: 2px solid transparent;
-      background-clip: content-box;
+      border: 3px solid rgba(0, 0, 0, 0.2); /* Tạo khoảng cách để dễ nhìn */
+      background-clip: padding-box;
     }
     ::-webkit-scrollbar-thumb:hover {
-      background: rgba(99, 102, 241, 0.6);
-      border: 2px solid transparent;
-      background-clip: content-box;
+      background: rgba(99, 102, 241, 0.8);
+      border: 2px solid rgba(0, 0, 0, 0.1);
     }
 
     #root {
@@ -62,7 +58,6 @@
       display: flex;
       flex-direction: column;
     }
-    /* Tối ưu cho màn hình tai thỏ/dynamic island */
     @supports (padding-top: env(safe-area-inset-top)) {
       header {
         padding-top: calc(1rem + env(safe-area-inset-top));
