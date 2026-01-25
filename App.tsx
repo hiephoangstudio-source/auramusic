@@ -12,7 +12,7 @@ import AIDJ from './components/AIDJ';
 import Lyrics from './components/Lyrics';
 import PlaylistManager from './components/PlaylistManager';
 import { getSongInsight, getSongStory, searchMusicOnline, OnlineSongResult } from './services/geminiService';
-import { saveSongBlob, getSongBlob, deleteSongBlob } from './services/dbService';
+import { saveSongBlob, getSongBlob, deleteSongBlob, saveLibraryMetadata, getLibraryMetadata } from './services/dbService';
 
 const PREVIEW_STREAM = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3";
 
@@ -35,7 +35,6 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'ai' | 'lyrics' | 'story'>('ai');
   const [showLibrary, setShowLibrary] = useState(true);
   const [favorites, setFavorites] = useState<string[]>([]);
-  const [showPlaylistManager, setShowPlaylistManager] = useState(false);
   const [insight, setInsight] = useState<string | null>(null);
   const [songStory, setSongStory] = useState<string | null>(null);
   const [isStoryLoading, setIsStoryLoading] = useState(false);
@@ -45,16 +44,17 @@ const App: React.FC = () => {
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
 
-  // Load Library from LocalStorage and DB
+  // Load Library - Ưu tiên IndexedDB để chạy tốt trên di động
   useEffect(() => {
     const loadLibrary = async () => {
       setIsLibraryLoading(true);
       try {
-        const savedMetadata = localStorage.getItem('aura_library_metadata');
-        if (!savedMetadata) {
+        const metadata = await getLibraryMetadata();
+        if (metadata.length === 0) {
+          // Fallback to MOCK
           setLibrary(MOCK_PLAYLIST);
+          await saveLibraryMetadata(MOCK_PLAYLIST);
         } else {
-          const metadata: Song[] = JSON.parse(savedMetadata);
           const loadedSongs: Song[] = [];
           for (const song of metadata) {
             if (song.id.startsWith('user')) {
@@ -76,19 +76,15 @@ const App: React.FC = () => {
     loadLibrary();
   }, []);
 
-  // Persist Metadata to LocalStorage
-  const persistLibrary = (lib: Song[]) => {
-    const metadata = lib.filter(s => !s.id.startsWith('online')).map(({ audioUrl, ...rest }) => ({
-      ...rest,
-      audioUrl: rest.id.startsWith('user') ? '' : audioUrl
-    }));
-    localStorage.setItem('aura_library_metadata', JSON.stringify(metadata));
+  // Persist Helper
+  const syncStorage = async (lib: Song[]) => {
+    await saveLibraryMetadata(lib);
   };
 
   const handleOnlineSearch = async () => {
     if (!searchQuery.trim()) return;
     setIsSearchingOnline(true);
-    setOnlineResults([]); // Clear old results
+    setOnlineResults([]); 
     const results = await searchMusicOnline(searchQuery);
     setOnlineResults(results);
     setIsSearchingOnline(false);
@@ -104,13 +100,12 @@ const App: React.FC = () => {
     
     if (existingIdx !== -1) {
       setPlayerState(s => ({ ...s, currentSongIndex: existingIdx, isPlaying: true, currentTime: 0 }));
-      setOnlineResults([]);
     } else {
       const newTrack: Song = {
         id: `online-${Date.now()}`,
         title: song.title,
         artist: song.artist,
-        album: (song as OnlineSongResult).album || "Web Stream",
+        album: (song as OnlineSongResult).album || "Web",
         coverUrl: (song as OnlineSongResult).coverUrl || `https://picsum.photos/seed/${encodeURIComponent(song.title)}/400/400`,
         audioUrl: PREVIEW_STREAM,
         duration: 0,
@@ -119,37 +114,30 @@ const App: React.FC = () => {
       
       const nextLib = [...library, newTrack];
       setLibrary(nextLib);
-      setPlayerState(s => ({ 
-        ...s, 
-        currentSongIndex: nextLib.length - 1, 
-        isPlaying: true, 
-        currentTime: 0 
-      }));
-      setOnlineResults([]);
+      setPlayerState(s => ({ ...s, currentSongIndex: nextLib.length - 1, isPlaying: true, currentTime: 0 }));
     }
+    setOnlineResults([]);
+    setSearchQuery('');
   };
 
   const handleDeleteSong = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!window.confirm("Xóa bài hát này khỏi thư viện?")) return;
+    if (!window.confirm("Xóa bài hát này?")) return;
 
-    if (id.startsWith('user')) {
-      await deleteSongBlob(id);
-    }
+    // Xóa triệt để
+    await deleteSongBlob(id);
 
     const indexToDelete = library.findIndex(s => s.id === id);
     const newLib = library.filter(s => s.id !== id);
     
     setLibrary(newLib);
-    persistLibrary(newLib);
+    await syncStorage(newLib);
 
     setPlayerState(s => {
       let nextIndex = s.currentSongIndex;
-      if (indexToDelete === s.currentSongIndex) {
-        nextIndex = 0;
-      } else if (indexToDelete < s.currentSongIndex) {
-        nextIndex = Math.max(0, s.currentSongIndex - 1);
-      }
+      if (indexToDelete === s.currentSongIndex) nextIndex = 0;
+      else if (indexToDelete < s.currentSongIndex) nextIndex = Math.max(0, s.currentSongIndex - 1);
+      
       return { 
         ...s, 
         currentSongIndex: nextIndex, 
@@ -217,7 +205,7 @@ const App: React.FC = () => {
       <header className="p-4 flex items-center justify-between z-30 bg-opacity-80 backdrop-blur-lg border-b border-white/5">
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-indigo-500 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+            <div className="w-8 h-8 rounded-lg bg-indigo-500 flex items-center justify-center shadow-lg">
               <Music2 size={18} className="text-white" />
             </div>
             <h1 className="text-lg font-black tracking-tighter">AURA</h1>
@@ -228,23 +216,23 @@ const App: React.FC = () => {
         </div>
         
         <div className="flex-1 max-w-md mx-8">
-          <form onSubmit={(e) => { e.preventDefault(); handleOnlineSearch(); }} className="relative group">
+          <form onSubmit={(e) => { e.preventDefault(); handleOnlineSearch(); }} className="relative">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20" size={16} />
             <input 
-              type="text" placeholder="Tìm kiếm hoặc dán URL..." value={searchQuery}
+              type="text" placeholder="Tìm kiếm âm nhạc..." value={searchQuery}
               onChange={(e) => {
                 setSearchQuery(e.target.value);
                 if (onlineResults.length > 0) setOnlineResults([]);
               }}
-              className="w-full bg-white/5 border border-white/10 rounded-full py-2.5 px-11 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all placeholder:text-white/20"
+              className="w-full bg-white/5 border border-white/10 rounded-full py-2.5 px-11 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all"
             />
             {searchQuery && (
               <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                <button type="button" onClick={() => { setSearchQuery(''); setOnlineResults([]); }} className="p-1.5 text-white/20 hover:text-white transition-all">
+                <button type="button" onClick={() => { setSearchQuery(''); setOnlineResults([]); }} className="p-1.5 text-white/20 hover:text-white">
                   <X size={14} />
                 </button>
-                <button type="submit" disabled={isSearchingOnline} className="text-indigo-400 text-[10px] font-black uppercase px-2 hover:text-indigo-300 disabled:opacity-50">
-                   Web Search
+                <button type="submit" disabled={isSearchingOnline} className="text-indigo-400 text-[10px] font-black uppercase px-2">
+                   {isSearchingOnline ? <RefreshCw size={12} className="animate-spin" /> : "Web"}
                 </button>
               </div>
             )}
@@ -252,7 +240,7 @@ const App: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-4">
-           <button onClick={() => fileInputRef.current?.click()} className="p-2 text-white/40 hover:text-white hover:bg-white/5 rounded-xl transition-all" title="Upload Music"><Upload size={20} /></button>
+           <button onClick={() => fileInputRef.current?.click()} className="p-2 text-white/40 hover:text-white" title="Upload"><Upload size={20} /></button>
            <input type="file" ref={fileInputRef} className="hidden" accept="audio/*" multiple onChange={async (e) => {
              const files = e.target.files;
              if (!files) return;
@@ -260,13 +248,13 @@ const App: React.FC = () => {
                const id = `user-${Date.now()}-${i}`;
                await saveSongBlob(id, files[i]);
                const newSong: Song = {
-                 id, title: files[i].name.replace(/\.[^/.]+$/, ""), artist: "Local Artist", album: "Uploaded",
+                 id, title: files[i].name.replace(/\.[^/.]+$/, ""), artist: "Local", album: "Uploaded",
                  coverUrl: `https://picsum.photos/seed/${id}/400/400`, audioUrl: URL.createObjectURL(files[i]),
                  duration: 0, color: "#a855f7"
                };
                setLibrary(prev => {
                  const next = [...prev, newSong];
-                 persistLibrary(next);
+                 syncStorage(next);
                  return next;
                });
              }
@@ -275,41 +263,36 @@ const App: React.FC = () => {
       </header>
 
       <div className="flex-1 flex overflow-hidden relative">
-        {/* Sidebar */}
         <aside className={`glass border-r border-white/5 transition-all duration-500 flex flex-col ${showLibrary ? 'w-80 opacity-100' : 'w-0 opacity-0 overflow-hidden'}`}>
           <div className="p-6 flex items-center justify-between">
             <h2 className="text-[10px] font-black uppercase tracking-[0.3em] text-white/40">
-              {onlineResults.length > 0 ? "Web Results" : searchQuery ? "Search Library" : "Library"}
+              {onlineResults.length > 0 ? "Kết quả Web" : "Thư viện"}
             </h2>
-            {onlineResults.length > 0 && (
-              <button onClick={() => setOnlineResults([])} className="text-[10px] font-bold text-indigo-400 hover:text-indigo-300">Clear Search</button>
-            )}
           </div>
           
           <div className="flex-1 overflow-y-auto px-2 space-y-1 scrollbar-hide">
             {isSearchingOnline ? (
               <div className="py-20 flex flex-col items-center justify-center gap-4 text-white/20">
                 <Loader2 size={32} className="animate-spin text-indigo-500" />
-                <p className="text-[10px] font-black uppercase tracking-widest">Searching the web...</p>
+                <p className="text-[10px] font-black uppercase tracking-widest">Đang tìm kiếm...</p>
               </div>
             ) : onlineResults.length > 0 ? (
               onlineResults.map((song, i) => (
                 <div key={i} onClick={() => handlePlaySong(song)} className="group p-3 rounded-2xl cursor-pointer hover:bg-indigo-500/10 transition-all flex items-center gap-3 border border-transparent hover:border-indigo-500/20">
                   <div className="w-10 h-10 rounded-lg overflow-hidden shrink-0 relative bg-white/5">
                     <img src={song.coverUrl} className="w-full h-full object-cover" alt="" />
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all">
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center">
                        <Play size={16} fill="white" className="text-white" />
                     </div>
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs font-bold truncate text-white group-hover:text-indigo-400">{song.title}</p>
-                    <p className="text-[10px] text-white/30 truncate uppercase tracking-wider font-bold">{song.artist}</p>
+                    <p className="text-xs font-bold truncate group-hover:text-indigo-400">{song.title}</p>
+                    <p className="text-[10px] text-white/30 truncate uppercase font-bold">{song.artist}</p>
                   </div>
-                  <Globe size={12} className="text-indigo-400/40" />
                 </div>
               ))
             ) : (
-              filteredLibrary.map((song, idx) => (
+              filteredLibrary.map((song) => (
                 <div key={song.id} 
                   onClick={() => setPlayerState(s => ({ ...s, currentSongIndex: library.findIndex(lb => lb.id === song.id), isPlaying: true, currentTime: 0 }))} 
                   className={`group p-3 rounded-2xl cursor-pointer transition-all flex items-center gap-3 ${currentSong?.id === song.id ? 'bg-indigo-500/10 border-indigo-500/20' : 'hover:bg-white/5 border-transparent'} border`}
@@ -324,14 +307,12 @@ const App: React.FC = () => {
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className={`text-xs font-bold truncate ${currentSong?.id === song.id ? 'text-indigo-400' : 'text-white'}`}>{song.title}</p>
-                    <p className="text-[10px] text-white/30 truncate uppercase tracking-wider font-bold">{song.artist}</p>
+                    <p className="text-[10px] text-white/30 truncate uppercase font-bold">{song.artist}</p>
                   </div>
                   <div className="flex items-center gap-1">
-                    {song.id.startsWith('online') && <Globe size={10} className="text-indigo-400/40" />}
                     <button 
                       onClick={(e) => handleDeleteSong(song.id, e)}
                       className="p-1.5 opacity-0 group-hover:opacity-100 hover:bg-red-500/20 hover:text-red-400 rounded-lg transition-all text-white/20"
-                      title="Remove from library"
                     >
                       <Trash2 size={14} />
                     </button>
@@ -339,47 +320,34 @@ const App: React.FC = () => {
                 </div>
               ))
             )}
-            {!isSearchingOnline && onlineResults.length === 0 && filteredLibrary.length === 0 && (
-               <div className="p-10 text-center opacity-20">
-                 <Search size={32} className="mx-auto mb-2 text-white/50" />
-                 <p className="text-[10px] font-bold uppercase tracking-widest">No matching results</p>
-               </div>
-            )}
           </div>
         </aside>
 
-        {/* Player Area */}
         <main className="flex-1 flex flex-col lg:flex-row gap-6 p-4 lg:p-6 overflow-hidden">
           <div className="flex-1 glass rounded-[3.5rem] p-10 flex flex-col relative overflow-hidden">
              {currentSong ? (
                <div className="relative z-10 flex flex-col h-full">
-                  <div className="flex justify-between items-start mb-4">
+                  <div className="flex justify-between items-start">
                     <div>
                       <span className="text-[10px] font-black uppercase tracking-[0.4em] text-indigo-400/60 mb-1 block">Aura Playing</span>
                       <h2 className="text-4xl font-black tracking-tight mb-0.5">{currentSong.title}</h2>
                       <p className="text-sm text-white/40 font-bold uppercase tracking-widest">{currentSong.artist}</p>
                     </div>
-                    <button onClick={() => setFavorites(prev => prev.includes(currentSong.id) ? prev.filter(f => f !== currentSong.id) : [...prev, currentSong.id])} className={`p-4 rounded-full transition-all ${favorites.includes(currentSong.id) ? 'bg-red-500/20 text-red-500 shadow-lg shadow-red-500/10' : 'hover:bg-white/5 text-white/20'}`}>
-                      <Heart size={20} fill={favorites.includes(currentSong.id) ? "currentColor" : "none"} />
-                    </button>
                   </div>
                   <div className="flex-1 flex flex-col items-center justify-center">
-                    <div className="relative group">
-                      <div className="absolute inset-0 bg-indigo-500/20 blur-3xl opacity-0 group-hover:opacity-100 transition-opacity duration-700"></div>
-                      <div className="w-64 h-64 rounded-[4rem] overflow-hidden shadow-2xl transition-all hover:scale-105 duration-700 relative z-10">
-                        <img src={currentSong.coverUrl} className="w-full h-full object-cover" alt="" />
-                      </div>
+                    <div className="w-64 h-64 rounded-[4rem] overflow-hidden shadow-2xl transition-all hover:scale-105 duration-700 relative z-10">
+                      <img src={currentSong.coverUrl} className="w-full h-full object-cover" alt="" />
                     </div>
                     <div className="w-full max-w-xl mt-12">
                        <Visualizer analyser={analyser} color={currentSong.color} type="bars" />
                     </div>
                   </div>
                   <div className="flex items-center justify-center gap-10 mt-auto pt-6">
-                    <button onClick={() => setPlayerState(s => ({ ...s, currentSongIndex: (s.currentSongIndex - 1 + library.length) % library.length }))} className="text-white/30 hover:text-white transition-all"><SkipBack size={36} fill="currentColor" /></button>
-                    <button onClick={() => setPlayerState(s => ({ ...s, isPlaying: !s.isPlaying }))} className="w-20 h-20 rounded-[2.5rem] bg-white text-black flex items-center justify-center hover:scale-110 active:scale-95 transition-all shadow-xl shadow-white/10">
+                    <button onClick={() => setPlayerState(s => ({ ...s, currentSongIndex: (s.currentSongIndex - 1 + library.length) % library.length }))} className="text-white/30 hover:text-white"><SkipBack size={36} fill="currentColor" /></button>
+                    <button onClick={() => setPlayerState(s => ({ ...s, isPlaying: !s.isPlaying }))} className="w-20 h-20 rounded-[2.5rem] bg-white text-black flex items-center justify-center hover:scale-110 active:scale-95 transition-all shadow-xl">
                       {playerState.isPlaying ? <Pause size={32} fill="currentColor" /> : <Play size={32} fill="currentColor" className="ml-1" />}
                     </button>
-                    <button onClick={() => setPlayerState(s => ({ ...s, currentSongIndex: (s.currentSongIndex + 1) % library.length }))} className="text-white/30 hover:text-white transition-all"><SkipForward size={36} fill="currentColor" /></button>
+                    <button onClick={() => setPlayerState(s => ({ ...s, currentSongIndex: (s.currentSongIndex + 1) % library.length }))} className="text-white/30 hover:text-white"><SkipForward size={36} fill="currentColor" /></button>
                   </div>
                </div>
              ) : (
@@ -387,8 +355,8 @@ const App: React.FC = () => {
                  <div className="p-10 rounded-full border border-white/5 bg-white/5 mb-6">
                    <Music2 size={80} strokeWidth={1} />
                  </div>
-                 <h2 className="text-xl font-black uppercase tracking-widest mb-2">Aura AI Assistant</h2>
-                 <p className="text-xs font-bold opacity-50 uppercase tracking-widest max-w-[200px]">Select a song or upload music to begin</p>
+                 <h2 className="text-xl font-black uppercase tracking-widest">Aura Assistant</h2>
+                 <p className="text-xs font-bold opacity-50 uppercase tracking-widest">Select a song to start</p>
                </div>
              )}
           </div>
@@ -396,8 +364,8 @@ const App: React.FC = () => {
           <div className="w-full lg:w-[400px] flex flex-col gap-6">
             <div className="glass rounded-[2rem] p-1.5 flex bg-white/5">
                {(['ai', 'lyrics', 'story'] as const).map(tab => (
-                 <button key={tab} onClick={() => setActiveTab(tab)} className={`flex-1 py-3 rounded-[1.5rem] text-[9px] font-black uppercase tracking-widest transition-all ${activeTab === tab ? 'bg-white text-black shadow-lg shadow-white/5' : 'text-white/40 hover:text-white/60'}`}>
-                   {tab === 'ai' ? 'Assistant' : tab === 'lyrics' ? 'Lyrics' : 'Deep Story'}
+                 <button key={tab} onClick={() => setActiveTab(tab)} className={`flex-1 py-3 rounded-[1.5rem] text-[9px] font-black uppercase tracking-widest transition-all ${activeTab === tab ? 'bg-white text-black' : 'text-white/40 hover:text-white/60'}`}>
+                   {tab === 'ai' ? 'Assistant' : tab === 'lyrics' ? 'Lyrics' : 'Story'}
                  </button>
                ))}
             </div>
@@ -410,14 +378,14 @@ const App: React.FC = () => {
                     {isStoryLoading ? (
                       <div className="flex flex-col items-center justify-center h-full gap-4 text-white/20">
                         <RefreshCw className="animate-spin" />
-                        <span className="text-[10px] font-black uppercase tracking-widest">Generating story...</span>
+                        <span className="text-[10px] font-black uppercase tracking-widest">Generating...</span>
                       </div>
                     ) : (
                       <div className="space-y-6">
-                        <p className="text-base font-medium leading-relaxed italic text-white/80">"{songStory || 'The story is being written by the stars...'}"</p>
+                        <p className="text-base font-medium leading-relaxed italic text-white/80">"{songStory || 'The stars are writing...'}"</p>
                         {insight && (
                           <div className="pt-8 border-t border-white/5">
-                            <p className="text-[10px] text-white/30 uppercase font-black tracking-[0.2em] mb-4">Deep Insights</p>
+                            <p className="text-[10px] text-white/30 uppercase font-black tracking-[0.2em] mb-4">Insights</p>
                             <div className="text-xs font-medium leading-loose text-white/40">{insight}</div>
                           </div>
                         )}

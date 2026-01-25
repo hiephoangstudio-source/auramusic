@@ -2,10 +2,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Recommendation, Song } from "../types";
 
-// Initialize AI client using the environment variable API_KEY
 const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
-
-// Fallback audio URL for search results (when direct stream link is unavailable)
 const PREVIEW_STREAM_URL = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3";
 
 export interface OnlineSongResult {
@@ -16,18 +13,23 @@ export interface OnlineSongResult {
   sourceUri?: string;
 }
 
-/**
- * Searches for music online using Google Search grounding.
- * Optimized for speed by simplifying the prompt and schema expectations.
- */
+const safeParseJSON = (text: string) => {
+  try {
+    // Xử lý trường hợp AI trả về JSON bọc trong block code Markdown
+    const cleanText = text.replace(/```json|```/g, "").trim();
+    return JSON.parse(cleanText);
+  } catch (e) {
+    console.error("JSON Parse Error:", e);
+    return null;
+  }
+};
+
 export const searchMusicOnline = async (query: string): Promise<OnlineSongResult[]> => {
   try {
     const ai = getAI();
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `Search for music: "${query}". 
-      Return a JSON array of 5 best matches with keys: title, artist, album, coverUrl. 
-      Use real data from Google Search. If no coverUrl found, use 'https://picsum.photos/seed/[title]/400/400'.`,
+      contents: `Quick search music: "${query}". Return a JSON array of 5 tracks with keys: title, artist, album, coverUrl.`,
       config: {
         tools: [{ googleSearch: {} }],
         responseMimeType: "application/json",
@@ -40,40 +42,32 @@ export const searchMusicOnline = async (query: string): Promise<OnlineSongResult
               artist: { type: Type.STRING },
               album: { type: Type.STRING },
               coverUrl: { type: Type.STRING },
-              sourceUri: { type: Type.STRING }
             },
-            required: ["title", "artist"],
+            required: ["title", "artist", "album", "coverUrl"],
           }
         }
       },
     });
 
-    const text = response.text;
-    if (text) {
-      return JSON.parse(text.trim());
-    }
-    return [];
+    return safeParseJSON(response.text) || [];
   } catch (error) {
     console.error("Online search error:", error);
     return [];
   }
 };
 
-/**
- * Gets mood-based music recommendations using Google Search grounding.
- */
-export const getMoodRecommendation = async (
-  mood: string, 
-  favorites?: string[],
-  availableSongs?: Song[]
-): Promise<any> => {
+// Fixed: Added availableSongs parameter to match the caller in AIDJ.tsx
+export const getMoodRecommendation = async (mood: string, favorites?: string[], availableSongs?: Song[]): Promise<any> => {
   try {
     const ai = getAI();
-    const favsStr = favorites && favorites.length > 0 ? ` Favs: ${favorites.slice(0, 3).join(', ')}.` : '';
+    // Providing context of available songs if needed
+    const context = availableSongs && availableSongs.length > 0 
+      ? `\nUser's existing library: ${availableSongs.slice(0, 10).map(s => `${s.title} by ${s.artist}`).join(', ')}.`
+      : '';
     
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `Mood: "${mood}".${favsStr} Suggest 5 songs in JSON: vibe, description, suggestedPlaylist (array of {title, artist}).`,
+      contents: `Mood: "${mood}".${context}\nRecommend music and describe the vibe.`,
       config: {
         tools: [{ googleSearch: {} }],
         responseMimeType: "application/json",
@@ -88,27 +82,24 @@ export const getMoodRecommendation = async (
                 type: Type.OBJECT,
                 properties: {
                   title: { type: Type.STRING },
-                  artist: { type: Type.STRING }
+                  artist: { type: Type.STRING },
                 },
-                required: ["title", "artist"]
+                required: ["title", "artist"],
               }
             }
           },
-          required: ["vibe", "description", "suggestedPlaylist"]
+          required: ["vibe", "description", "suggestedPlaylist"],
         }
       }
     });
 
-    const text = response.text;
-    if (!text) return null;
-
-    const data = JSON.parse(text.trim());
+    const data = safeParseJSON(response.text);
     const sources = response.candidates?.[0]?.groundingMetadata?.groundingChunks?.map((chunk: any) => ({
       title: chunk.web?.title || "Source",
       uri: chunk.web?.uri
     })).filter((s: any) => s.uri) || [];
 
-    return { ...data, sources };
+    return data ? { ...data, sources } : null;
   } catch (error: any) {
     if (error?.message?.toLowerCase().includes('quota') || error?.status === 429) {
       return { error: true, code: 'QUOTA_EXCEEDED' };
@@ -121,7 +112,7 @@ export const getSongStory = async (title: string, artist: string): Promise<strin
   const ai = getAI();
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
-    contents: `Story of "${title}" by "${artist}". Short, Vietnamese.`,
+    contents: `Tell a 2-sentence story about song "${title}" by "${artist}" in Vietnamese.`,
     config: { tools: [{ googleSearch: {} }] }
   });
   return response.text || "Âm nhạc kể câu chuyện của riêng nó.";
@@ -131,7 +122,7 @@ export const getSongInsight = async (title: string, artist: string): Promise<str
   const ai = getAI();
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
-    contents: `Insight about "${title}" - "${artist}".`,
+    contents: `One-line insight for "${title}" - "${artist}".`,
   });
   return response.text || "";
 };
