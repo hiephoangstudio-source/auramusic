@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { 
-  Play, Pause, SkipBack, SkipForward, Search, Waves, List, RefreshCw, Upload, Trash2, Globe, ExternalLink, Sparkles, X, Loader2, AlertCircle, Key, Music2, Download, Copy, Check, Info, FileJson, Share
+  Play, Pause, SkipBack, SkipForward, Search, Waves, List, RefreshCw, Upload, Trash2, Globe, ExternalLink, Sparkles, X, Loader2, AlertCircle, Key, Music2, Download, Copy, Check, Info, FileJson, Share, PlusCircle
 } from 'lucide-react';
 import { MOCK_PLAYLIST } from './constants';
 import { Song, PlayerState } from './types';
@@ -30,7 +30,7 @@ const App: React.FC = () => {
   const [onlineResults, setOnlineResults] = useState<OnlineSongResult[]>([]);
   
   const [activeTab, setActiveTab] = useState<'ai' | 'lyrics' | 'story'>('ai');
-  const [showLibrary, setShowLibrary] = useState(false); // Default false for cleaner mobile start
+  const [showLibrary, setShowLibrary] = useState(false);
   const [insight, setInsight] = useState<string | null>(null);
   const [songStory, setSongStory] = useState<string | null>(null);
   const [isStoryLoading, setIsStoryLoading] = useState(false);
@@ -38,6 +38,7 @@ const App: React.FC = () => {
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [generatedSyncCode, setGeneratedSyncCode] = useState<string | null>(null);
   const [copySuccess, setCopySuccess] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   
   const audioRef = useRef<HTMLAudioElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -96,13 +97,6 @@ const App: React.FC = () => {
     setIsSearchingOnline(false);
   };
 
-  const handleOpenKeySelection = async () => {
-    if ((window as any).aistudio?.openSelectKey) {
-      await (window as any).aistudio.openSelectKey();
-      setGlobalError(null);
-    }
-  };
-
   const currentSong = useMemo(() => {
     if (library.length === 0) return null;
     return library[playerState.currentSongIndex] || library[0];
@@ -133,7 +127,7 @@ const App: React.FC = () => {
 
   const handleDeleteSong = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!window.confirm("Xóa bài hát này?")) return;
+    if (!window.confirm("Xóa bài hát này khỏi thư viện Aura?")) return;
     await deleteSongBlob(id);
     const indexToDelete = library.findIndex(s => s.id === id);
     const newLib = library.filter(s => s.id !== id);
@@ -199,57 +193,31 @@ const App: React.FC = () => {
     );
   }, [library, searchQuery]);
 
-  const exportSyncCode = () => {
-    const data = JSON.stringify(library.filter(s => !s.id.startsWith('user')));
-    const code = btoa(unescape(encodeURIComponent(data)));
-    setGeneratedSyncCode(code);
-    navigator.clipboard.writeText(code);
-    setCopySuccess(true);
-    setTimeout(() => setCopySuccess(false), 2000);
-  };
-
-  const exportBackupFile = () => {
-    const data = JSON.stringify(library.filter(s => !s.id.startsWith('user')));
-    const blob = new Blob([data], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `aura_backup_${new Date().toISOString().split('T')[0]}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const text = await file.text();
-    try {
-      const data = JSON.parse(text);
-      if (Array.isArray(data)) {
-        setLibrary(data);
-        await saveLibraryMetadata(data);
-        alert("Đã nhập thư viện thành công!");
-        setShowSyncModal(false);
-      }
-    } catch (e) {
-      alert("File không hợp lệ.");
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    setIsUploading(true);
+    const newSongs: Song[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const id = `user-${Date.now()}-${i}`;
+      await saveSongBlob(id, file);
+      newSongs.push({
+        id,
+        title: file.name.replace(/\.[^/.]+$/, ""),
+        artist: "Offline",
+        album: "My Phone",
+        coverUrl: `https://picsum.photos/seed/${id}/400/400`,
+        audioUrl: URL.createObjectURL(file),
+        duration: 0,
+        color: "#a855f7"
+      });
     }
-  };
-
-  const importSyncData = async () => {
-    const code = prompt("Dán mã đồng bộ vào đây:");
-    if (!code) return;
-    try {
-      const data = JSON.parse(decodeURIComponent(escape(atob(code.trim()))));
-      if (Array.isArray(data)) {
-        setLibrary(data);
-        await saveLibraryMetadata(data);
-        alert("Đồng bộ thư viện thành công!");
-        setShowSyncModal(false);
-      }
-    } catch (e) {
-      alert("Mã đồng bộ không hợp lệ.");
-    }
+    const nextLib = [...library, ...newSongs];
+    setLibrary(nextLib);
+    await syncStorage(nextLib);
+    setIsUploading(false);
+    if (files.length > 0) alert(`Đã thêm ${files.length} bài hát vào thư viện Aura!`);
   };
 
   return (
@@ -262,29 +230,29 @@ const App: React.FC = () => {
         />
       )}
 
-      {/* Sync Modal Overlay */}
+      {/* Sync & Help Modal */}
       {showSyncModal && (
         <div className="absolute inset-0 z-[110] bg-black/80 backdrop-blur-xl flex items-center justify-center p-4 sm:p-6 animate-in fade-in duration-300">
-           <div className="glass max-w-lg w-full p-8 rounded-[2.5rem] border-indigo-500/20 flex flex-col max-h-[90vh] overflow-y-auto scrollbar-hide">
+           <div className="glass max-w-lg w-full p-8 rounded-[3rem] border-indigo-500/20 flex flex-col max-h-[90vh] overflow-y-auto scrollbar-hide">
               <div className="w-14 h-14 bg-indigo-500/10 rounded-full flex items-center justify-center mx-auto text-indigo-400 mb-6 shrink-0">
                 <RefreshCw size={28} />
               </div>
               
               <div className="text-center mb-8 shrink-0">
-                <h3 className="text-xl font-black uppercase tracking-widest mb-2">Cài đặt & Đồng bộ</h3>
+                <h3 className="text-xl font-black uppercase tracking-widest mb-2">Đồng bộ & Cài đặt</h3>
                 <div className="flex flex-col gap-4 mt-6 text-left">
-                   <div className="p-4 bg-white/5 rounded-2xl flex gap-4 items-start border border-white/5">
+                   <div className="p-4 bg-indigo-500/5 rounded-2xl flex gap-4 items-start border border-indigo-500/10">
                       <div className="p-2 bg-indigo-500/20 rounded-lg text-indigo-400 shrink-0"><Share size={16}/></div>
                       <div>
-                        <p className="text-[10px] font-black uppercase text-white/80 mb-1">Cài đặt trên iPhone/iOS</p>
-                        <p className="text-[9px] text-white/40 leading-relaxed font-medium">Mở bằng Safari -> Nhấn nút 'Chia sẻ' -> Chọn 'Thêm vào màn hình chính'.</p>
+                        <p className="text-[10px] font-black uppercase text-white/80 mb-1">Cài app trên iPhone</p>
+                        <p className="text-[9px] text-white/40 leading-relaxed font-medium">Bấm <b>Chia sẻ</b> -> <b>Thêm vào MH chính</b>. Aura sẽ chạy như app thật!</p>
                       </div>
                    </div>
                    <div className="p-4 bg-white/5 rounded-2xl flex gap-4 items-start border border-white/5">
-                      <div className="p-2 bg-indigo-500/20 rounded-lg text-indigo-400 shrink-0"><Info size={16}/></div>
+                      <div className="p-2 bg-purple-500/20 rounded-lg text-purple-400 shrink-0"><PlusCircle size={16}/></div>
                       <div>
-                        <p className="text-[10px] font-black uppercase text-white/80 mb-1">Lưu ý về file Upload</p>
-                        <p className="text-[9px] text-white/40 leading-relaxed font-medium">Các bài hát bạn tự tải từ máy lên (Local) cần được upload lại trên mỗi thiết bị do hạn chế về lưu trữ trình duyệt.</p>
+                        <p className="text-[10px] font-black uppercase text-white/80 mb-1">Tự động đọc nhạc?</p>
+                        <p className="text-[9px] text-white/40 leading-relaxed font-medium">Do bảo mật iPhone, bạn hãy bấm nút <b>Upload</b> và chọn <b>nhiều bài cùng lúc</b>. Aura sẽ lưu chúng mãi mãi trong máy bạn.</p>
                       </div>
                    </div>
                 </div>
@@ -292,64 +260,23 @@ const App: React.FC = () => {
 
               <div className="grid grid-cols-2 gap-4 mb-8 shrink-0">
                 <button 
-                  onClick={exportSyncCode}
-                  className="py-4 bg-white/5 hover:bg-white/10 rounded-2xl flex flex-col items-center gap-3 transition-all group"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="py-5 bg-indigo-500 hover:bg-indigo-600 rounded-2xl flex flex-col items-center gap-3 transition-all shadow-lg shadow-indigo-500/20"
                 >
-                  <Copy className="text-indigo-400 group-hover:scale-110 transition-transform" />
-                  <span className="text-[9px] font-black uppercase tracking-widest">Sao chép mã</span>
+                  <PlusCircle className="text-white" />
+                  <span className="text-[9px] text-white font-black uppercase tracking-widest">Quét nhạc máy</span>
                 </button>
                 <button 
-                  onClick={importSyncData}
-                  className="py-4 bg-white/5 hover:bg-white/10 rounded-2xl flex flex-col items-center gap-3 transition-all group"
+                  onClick={() => setShowSyncModal(false)}
+                  className="py-5 bg-white/5 hover:bg-white/10 rounded-2xl flex flex-col items-center gap-3 transition-all"
                 >
-                  <Download className="text-indigo-400 group-hover:scale-110 transition-transform" />
-                  <span className="text-[9px] font-black uppercase tracking-widest">Dán mã nhận</span>
+                  <RefreshCw className="text-white/40" />
+                  <span className="text-[9px] text-white/40 font-black uppercase tracking-widest">Đồng bộ Web</span>
                 </button>
-                <button 
-                  onClick={exportBackupFile}
-                  className="py-4 bg-white/5 hover:bg-white/10 rounded-2xl flex flex-col items-center gap-3 transition-all group"
-                >
-                  <FileJson className="text-indigo-400 group-hover:scale-110 transition-transform" />
-                  <span className="text-[9px] font-black uppercase tracking-widest">Xuất file .json</span>
-                </button>
-                <button 
-                  onClick={() => importFileRef.current?.click()}
-                  className="py-4 bg-white/5 hover:bg-white/10 rounded-2xl flex flex-col items-center gap-3 transition-all group"
-                >
-                  <Upload className="text-indigo-400 group-hover:scale-110 transition-transform" />
-                  <span className="text-[9px] font-black uppercase tracking-widest">Nhập file .json</span>
-                </button>
-                <input type="file" ref={importFileRef} className="hidden" accept=".json" onChange={handleImportFile} />
               </div>
 
-              {generatedSyncCode && (
-                <div className="space-y-4 animate-in slide-in-from-top-4 duration-500 mb-6">
-                  <div className="text-left">
-                    <p className="text-[9px] font-black uppercase tracking-widest text-indigo-400/60 mb-2 px-2">Mã đồng bộ (Dùng trên điện thoại):</p>
-                    <div className="relative group">
-                      <textarea 
-                        readOnly 
-                        value={generatedSyncCode}
-                        className="w-full h-24 bg-black/40 border border-white/10 rounded-2xl p-4 text-[10px] font-mono text-white/60 focus:outline-none resize-none scrollbar-hide"
-                      />
-                      <button 
-                        onClick={() => {
-                          navigator.clipboard.writeText(generatedSyncCode);
-                          setCopySuccess(true);
-                          setTimeout(() => setCopySuccess(false), 2000);
-                        }}
-                        className="absolute bottom-3 right-3 p-2 bg-indigo-500 text-white rounded-lg hover:scale-105 active:scale-95 transition-all flex items-center gap-2 shadow-lg"
-                      >
-                        {copySuccess ? <Check size={12} /> : <Copy size={12} />}
-                        <span className="text-[8px] font-bold uppercase">{copySuccess ? "Đã chép" : "Sao chép"}</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
               <button 
-                onClick={() => { setShowSyncModal(false); setGeneratedSyncCode(null); }} 
+                onClick={() => setShowSyncModal(false)} 
                 className="text-[9px] text-white/20 uppercase font-black tracking-widest hover:text-white transition-colors pt-4 shrink-0"
               >
                 Đóng
@@ -358,37 +285,35 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Global Quota Error Overlay */}
+      {/* Global Quota Error */}
       {globalError && (globalError.code === 'QUOTA_EXCEEDED' || globalError.code === 'ENTITY_NOT_FOUND') && (
-        <div className="absolute inset-0 z-[100] bg-black/60 backdrop-blur-md flex items-center justify-center p-6 animate-in fade-in duration-500">
+        <div className="absolute inset-0 z-[100] bg-black/60 backdrop-blur-md flex items-center justify-center p-6">
            <div className="glass max-w-md w-full p-10 rounded-[3rem] border-indigo-500/20 text-center space-y-6">
               <div className="w-20 h-20 bg-indigo-500/10 rounded-full flex items-center justify-center mx-auto text-indigo-400">
                 <AlertCircle size={40} />
               </div>
-              <div>
-                <h3 className="text-xl font-black uppercase tracking-widest mb-2">Hết hạn mức AI</h3>
-                <p className="text-sm text-white/60 leading-relaxed">Bạn đã sử dụng hết hạn mức miễn phí của hệ thống. Để tiếp tục trải nghiệm không giới hạn, vui lòng sử dụng API Key cá nhân của bạn.</p>
-              </div>
-              <div className="space-y-3 pt-4">
-                <button 
-                  onClick={handleOpenKeySelection}
-                  className="w-full py-4 bg-indigo-500 hover:bg-indigo-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] transition-all shadow-xl shadow-indigo-500/20 flex items-center justify-center gap-3"
-                >
-                  <Key size={16} /> Sử dụng API Key cá nhân
-                </button>
-                <button 
-                  onClick={() => setGlobalError(null)}
-                  className="text-[9px] text-white/20 uppercase font-bold tracking-widest hover:text-white pt-4"
-                >
-                  Đóng
-                </button>
-              </div>
+              <h3 className="text-xl font-black uppercase tracking-widest">Hết hạn mức AI</h3>
+              <p className="text-sm text-white/60">Sử dụng API Key cá nhân để tiếp tục trải nghiệm AI DJ và Web Search.</p>
+              <button onClick={() => (window as any).aistudio?.openSelectKey()} className="w-full py-4 bg-indigo-500 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] transition-all">
+                Sử dụng API Key cá nhân
+              </button>
+              <button onClick={() => setGlobalError(null)} className="text-[9px] text-white/20 uppercase font-bold tracking-widest">Đóng</button>
            </div>
         </div>
       )}
 
+      {/* Uploading Overlay */}
+      {isUploading && (
+        <div className="absolute inset-0 z-[120] bg-black/80 flex items-center justify-center">
+          <div className="text-center space-y-4">
+            <Loader2 className="animate-spin text-indigo-500 mx-auto" size={48} />
+            <p className="text-xs font-black uppercase tracking-widest animate-pulse">Đang nạp nhạc vào Aura...</p>
+          </div>
+        </div>
+      )}
+
       <header className="p-4 flex items-center justify-between z-30 bg-opacity-80 backdrop-blur-lg border-b border-white/5">
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-4 sm:gap-6">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-indigo-500 flex items-center justify-center shadow-lg">
               <Music2 size={18} className="text-white" />
@@ -400,59 +325,34 @@ const App: React.FC = () => {
           </button>
         </div>
         
-        <div className="flex-1 max-w-md mx-8 hidden sm:block">
+        <div className="flex-1 max-w-md mx-4 sm:mx-8 hidden sm:block">
           <form onSubmit={(e) => { e.preventDefault(); handleOnlineSearch(); }} className="relative">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20" size={16} />
             <input 
               type="text" placeholder="Tìm kiếm âm nhạc trực tuyến..." value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-                if (onlineResults.length > 0) setOnlineResults([]);
-              }}
+              onChange={(e) => { setSearchQuery(e.target.value); if (onlineResults.length > 0) setOnlineResults([]); }}
               className="w-full bg-white/5 border border-white/10 rounded-full py-2.5 px-11 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all"
             />
             {searchQuery && (
-              <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                <button type="button" onClick={() => { setSearchQuery(''); setOnlineResults([]); }} className="p-1.5 text-white/20 hover:text-white">
-                  <X size={14} />
-                </button>
-                <button type="submit" disabled={isSearchingOnline} className="text-indigo-400 text-[10px] font-black uppercase px-2">
-                   {isSearchingOnline ? <RefreshCw size={12} className="animate-spin" /> : "Web"}
-                </button>
-              </div>
+              <button type="submit" disabled={isSearchingOnline} className="absolute right-4 top-1/2 -translate-y-1/2 text-indigo-400 text-[10px] font-black uppercase">
+                 {isSearchingOnline ? <RefreshCw size={12} className="animate-spin" /> : "Web"}
+              </button>
             )}
           </form>
         </div>
 
-        <div className="flex items-center gap-4">
-           <button onClick={() => setShowSyncModal(true)} className="p-2 text-white/40 hover:text-white" title="Sync"><RefreshCw size={20} /></button>
-           <button onClick={() => fileInputRef.current?.click()} className="p-2 text-white/40 hover:text-white" title="Upload"><Upload size={20} /></button>
-           <input type="file" ref={fileInputRef} className="hidden" accept="audio/*" multiple onChange={async (e) => {
-             const files = e.target.files;
-             if (!files) return;
-             for (let i = 0; i < files.length; i++) {
-               const id = `user-${Date.now()}-${i}`;
-               await saveSongBlob(id, files[i]);
-               const newSong: Song = {
-                 id, title: files[i].name.replace(/\.[^/.]+$/, ""), artist: "Local", album: "Uploaded",
-                 coverUrl: `https://picsum.photos/seed/${id}/400/400`, audioUrl: URL.createObjectURL(files[i]),
-                 duration: 0, color: "#a855f7"
-               };
-               setLibrary(prev => {
-                 const next = [...prev, newSong];
-                 syncStorage(next);
-                 return next;
-               });
-             }
-           }} />
+        <div className="flex items-center gap-2 sm:gap-4">
+           <button onClick={() => setShowSyncModal(true)} className="p-2 text-white/40 hover:text-white" title="Settings"><RefreshCw size={20} /></button>
+           <button onClick={() => fileInputRef.current?.click()} className="p-2 text-indigo-400 hover:text-white bg-indigo-500/10 rounded-xl" title="Thêm nhạc máy"><PlusCircle size={20} /></button>
+           <input type="file" ref={fileInputRef} className="hidden" accept="audio/*" multiple onChange={handleFileUpload} />
         </div>
       </header>
 
       <div className="flex-1 flex overflow-hidden relative">
-        <aside className={`glass border-r border-white/5 transition-all duration-500 flex flex-col ${showLibrary ? 'w-full sm:w-80 opacity-100 absolute sm:relative z-40 h-full sm:h-auto' : 'w-0 opacity-0 overflow-hidden'}`}>
+        <aside className={`glass border-r border-white/5 transition-all duration-500 flex flex-col ${showLibrary ? 'w-full sm:w-80 opacity-100 absolute sm:relative z-40 h-full' : 'w-0 opacity-0 overflow-hidden'}`}>
           <div className="p-6 flex items-center justify-between">
             <h2 className="text-[10px] font-black uppercase tracking-[0.3em] text-white/40">
-              {onlineResults.length > 0 ? "Kết quả Web" : "Thư viện"}
+              {onlineResults.length > 0 ? "Kết quả Web" : "Thư viện Aura"}
             </h2>
             {showLibrary && <button onClick={() => setShowLibrary(false)} className="sm:hidden p-2 text-white/40"><X size={18} /></button>}
           </div>
@@ -468,9 +368,7 @@ const App: React.FC = () => {
                 <div key={i} onClick={() => handlePlaySong(song)} className="group p-3 rounded-2xl cursor-pointer hover:bg-indigo-500/10 transition-all flex items-center gap-3 border border-transparent hover:border-indigo-500/20">
                   <div className="w-10 h-10 rounded-lg overflow-hidden shrink-0 relative bg-white/5">
                     <img src={song.coverUrl} className="w-full h-full object-cover" alt="" />
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center">
-                       <Play size={16} fill="white" className="text-white" />
-                    </div>
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center"><Play size={16} fill="white" /></div>
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-bold truncate group-hover:text-indigo-400">{song.title}</p>
@@ -504,14 +402,7 @@ const App: React.FC = () => {
                     <p className={`text-xs font-bold truncate ${currentSong?.id === song.id ? 'text-indigo-400' : 'text-white'}`}>{song.title}</p>
                     <p className="text-[10px] text-white/30 truncate uppercase font-bold">{song.artist}</p>
                   </div>
-                  <div className="flex items-center gap-1">
-                    <button 
-                      onClick={(e) => handleDeleteSong(song.id, e)}
-                      className="p-1.5 sm:opacity-0 group-hover:opacity-100 hover:bg-red-500/20 hover:text-red-400 rounded-lg transition-all text-white/20"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
+                  <button onClick={(e) => handleDeleteSong(song.id, e)} className="p-1.5 hover:bg-red-500/20 hover:text-red-400 rounded-lg transition-all text-white/10 sm:opacity-0 group-hover:opacity-100"><Trash2 size={14} /></button>
                 </div>
               ))
             )}
@@ -523,14 +414,14 @@ const App: React.FC = () => {
              {currentSong ? (
                <div className="relative z-10 flex flex-col h-full">
                   <div className="flex justify-between items-start">
-                    <div>
+                    <div className="min-w-0">
                       <span className="text-[10px] font-black uppercase tracking-[0.4em] text-indigo-400/60 mb-1 block">Aura Playing</span>
-                      <h2 className="text-3xl sm:text-4xl font-black tracking-tight mb-0.5 truncate max-w-[250px] sm:max-w-none">{currentSong.title}</h2>
-                      <p className="text-sm text-white/40 font-bold uppercase tracking-widest">{currentSong.artist}</p>
+                      <h2 className="text-3xl sm:text-4xl font-black tracking-tight mb-0.5 truncate">{currentSong.title}</h2>
+                      <p className="text-sm text-white/40 font-bold uppercase tracking-widest truncate">{currentSong.artist}</p>
                     </div>
                   </div>
                   <div className="flex-1 flex flex-col items-center justify-center py-10">
-                    <div className="w-48 h-48 sm:w-64 sm:h-64 rounded-[3rem] sm:rounded-[4rem] overflow-hidden shadow-2xl transition-all hover:scale-105 duration-700 relative z-10">
+                    <div className="w-48 h-48 sm:w-64 sm:h-64 rounded-[3rem] sm:rounded-[4rem] overflow-hidden shadow-2xl relative z-10">
                       <img src={currentSong.coverUrl} className="w-full h-full object-cover" alt="" />
                     </div>
                     <div className="w-full max-w-xl mt-12 hidden sm:block">
@@ -539,7 +430,7 @@ const App: React.FC = () => {
                   </div>
                   <div className="flex items-center justify-center gap-6 sm:gap-10 mt-auto pt-6">
                     <button onClick={() => setPlayerState(s => ({ ...s, currentSongIndex: (s.currentSongIndex - 1 + library.length) % library.length }))} className="text-white/30 hover:text-white"><SkipBack size={30} fill="currentColor" /></button>
-                    <button onClick={() => setPlayerState(s => ({ ...s, isPlaying: !s.isPlaying }))} className="w-16 h-16 sm:w-20 sm:h-20 rounded-[2rem] sm:rounded-[2.5rem] bg-white text-black flex items-center justify-center hover:scale-110 active:scale-95 transition-all shadow-xl">
+                    <button onClick={() => setPlayerState(s => ({ ...s, isPlaying: !s.isPlaying }))} className="w-16 h-16 sm:w-20 sm:h-20 rounded-[2rem] sm:rounded-[2.5rem] bg-white text-black flex items-center justify-center hover:scale-110 active:scale-95 transition-all shadow-xl shadow-indigo-500/10">
                       {playerState.isPlaying ? <Pause size={28} fill="currentColor" /> : <Play size={28} fill="currentColor" className="ml-1" />}
                     </button>
                     <button onClick={() => setPlayerState(s => ({ ...s, currentSongIndex: (s.currentSongIndex + 1) % library.length }))} className="text-white/30 hover:text-white"><SkipForward size={30} fill="currentColor" /></button>
@@ -547,11 +438,9 @@ const App: React.FC = () => {
                </div>
              ) : (
                <div className="flex flex-col items-center justify-center h-full opacity-20 text-center py-20">
-                 <div className="p-8 sm:p-10 rounded-full border border-white/5 bg-white/5 mb-6">
-                   <Music2 size={60} strokeWidth={1} />
-                 </div>
+                 <div className="p-8 sm:p-10 rounded-full border border-white/5 bg-white/5 mb-6"><Music2 size={60} strokeWidth={1} /></div>
                  <h2 className="text-lg font-black uppercase tracking-widest">Aura Assistant</h2>
-                 <p className="text-[10px] font-bold opacity-50 uppercase tracking-widest">Chọn nhạc để bắt đầu</p>
+                 <p className="text-[10px] font-bold opacity-50 uppercase tracking-widest">Chọn nhạc hoặc tải lên để bắt đầu</p>
                </div>
              )}
           </div>
@@ -571,13 +460,10 @@ const App: React.FC = () => {
                  <div className="glass rounded-[2.5rem] sm:rounded-[3.5rem] h-full p-8 sm:p-10 overflow-y-auto scrollbar-hide flex flex-col">
                     <h3 className="text-lg font-black mb-6 flex items-center gap-3"><Sparkles className="text-indigo-400" size={20} /> Deep Story</h3>
                     {isStoryLoading ? (
-                      <div className="flex flex-col items-center justify-center h-full gap-4 text-white/20">
-                        <RefreshCw className="animate-spin" />
-                        <span className="text-[10px] font-black uppercase tracking-widest">Generating...</span>
-                      </div>
+                      <div className="flex flex-col items-center justify-center h-full gap-4 text-white/20"><RefreshCw className="animate-spin" /><span className="text-[10px] font-black uppercase tracking-widest">Generating...</span></div>
                     ) : (
                       <div className="space-y-6">
-                        <p className="text-sm sm:text-base font-medium leading-relaxed italic text-white/80">"{songStory || 'Đang lắng nghe âm nhạc...'}"</p>
+                        <p className="text-sm sm:text-base font-medium leading-relaxed italic text-white/80">"{songStory || 'Aura đang lắng nghe...'}"</p>
                         {insight && (
                           <div className="pt-8 border-t border-white/5">
                             <p className="text-[10px] text-white/30 uppercase font-black tracking-[0.2em] mb-4">Insights</p>
