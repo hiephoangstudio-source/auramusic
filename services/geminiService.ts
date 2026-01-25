@@ -18,16 +18,16 @@ export interface OnlineSongResult {
 
 /**
  * Searches for music online using Google Search grounding.
+ * Optimized for speed by simplifying the prompt and schema expectations.
  */
 export const searchMusicOnline = async (query: string): Promise<OnlineSongResult[]> => {
   try {
     const ai = getAI();
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `Tìm kiếm danh sách các bài hát liên quan đến: "${query}". 
-      Hãy trả về thông tin chi tiết của ít nhất 5 bài hát phù hợp nhất.
-      Sử dụng Google Search để lấy thông tin chính xác về nghệ sĩ, album và link ảnh bìa (nếu có).
-      Nếu không có link ảnh bìa thực tế, hãy sử dụng URL ảnh giả lập từ picsum.photos dựa trên tên bài hát.`,
+      contents: `Search for music: "${query}". 
+      Return a JSON array of 5 best matches with keys: title, artist, album, coverUrl. 
+      Use real data from Google Search. If no coverUrl found, use 'https://picsum.photos/seed/[title]/400/400'.`,
       config: {
         tools: [{ googleSearch: {} }],
         responseMimeType: "application/json",
@@ -43,7 +43,6 @@ export const searchMusicOnline = async (query: string): Promise<OnlineSongResult
               sourceUri: { type: Type.STRING }
             },
             required: ["title", "artist"],
-            propertyOrdering: ["title", "artist", "album", "coverUrl", "sourceUri"]
           }
         }
       },
@@ -62,7 +61,6 @@ export const searchMusicOnline = async (query: string): Promise<OnlineSongResult
 
 /**
  * Gets mood-based music recommendations using Google Search grounding.
- * Extracts grounding sources for UI display.
  */
 export const getMoodRecommendation = async (
   mood: string, 
@@ -71,12 +69,11 @@ export const getMoodRecommendation = async (
 ): Promise<any> => {
   try {
     const ai = getAI();
-    const favsStr = favorites && favorites.length > 0 ? ` Favorites: ${favorites.join(', ')}.` : '';
-    const libStr = availableSongs && availableSongs.length > 0 ? ` Available in library: ${availableSongs.map(s => s.title).join(', ')}.` : '';
+    const favsStr = favorites && favorites.length > 0 ? ` Favs: ${favorites.slice(0, 3).join(', ')}.` : '';
     
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `Tâm trạng người dùng: "${mood}".${favsStr}${libStr} Hãy gợi ý 5 bài hát trending phù hợp nhất. Trả về JSON.`,
+      contents: `Mood: "${mood}".${favsStr} Suggest 5 songs in JSON: vibe, description, suggestedPlaylist (array of {title, artist}).`,
       config: {
         tools: [{ googleSearch: {} }],
         responseMimeType: "application/json",
@@ -93,13 +90,11 @@ export const getMoodRecommendation = async (
                   title: { type: Type.STRING },
                   artist: { type: Type.STRING }
                 },
-                required: ["title", "artist"],
-                propertyOrdering: ["title", "artist"]
+                required: ["title", "artist"]
               }
             }
           },
-          required: ["vibe", "description", "suggestedPlaylist"],
-          propertyOrdering: ["vibe", "description", "suggestedPlaylist"]
+          required: ["vibe", "description", "suggestedPlaylist"]
         }
       }
     });
@@ -108,18 +103,13 @@ export const getMoodRecommendation = async (
     if (!text) return null;
 
     const data = JSON.parse(text.trim());
-    
-    // Extracting grounding chunks to comply with Google Search grounding requirements
     const sources = response.candidates?.[0]?.groundingMetadata?.groundingChunks?.map((chunk: any) => ({
-      title: chunk.web?.title || "Search Result",
+      title: chunk.web?.title || "Source",
       uri: chunk.web?.uri
     })).filter((s: any) => s.uri) || [];
 
     return { ...data, sources };
   } catch (error: any) {
-    console.error("Mood recommendation error:", error);
-    // Special handling for quota errors as requested by UI.
-    // Check for quota exceeded message or 429 status code.
     if (error?.message?.toLowerCase().includes('quota') || error?.status === 429) {
       return { error: true, code: 'QUOTA_EXCEEDED' };
     }
@@ -127,27 +117,21 @@ export const getMoodRecommendation = async (
   }
 };
 
-/**
- * Generates a story about a song using Google Search grounding.
- */
 export const getSongStory = async (title: string, artist: string): Promise<string> => {
   const ai = getAI();
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
-    contents: `Kể chuyện về bài hát "${title}" của "${artist}". Ngắn gọn, tiếng Việt.`,
+    contents: `Story of "${title}" by "${artist}". Short, Vietnamese.`,
     config: { tools: [{ googleSearch: {} }] }
   });
   return response.text || "Âm nhạc kể câu chuyện của riêng nó.";
 };
 
-/**
- * Provides insights about a song.
- */
 export const getSongInsight = async (title: string, artist: string): Promise<string> => {
   const ai = getAI();
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
-    contents: `Insight ngắn về "${title}" - "${artist}".`,
+    contents: `Insight about "${title}" - "${artist}".`,
   });
   return response.text || "";
 };
