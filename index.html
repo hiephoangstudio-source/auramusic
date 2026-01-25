@@ -13,6 +13,7 @@
       background-color: #050505;
       color: #ffffff;
       overflow-x: hidden;
+      margin: 0;
     }
     .font-syncopate {
       font-family: 'Syncopate', sans-serif;
@@ -35,6 +36,12 @@
       background: rgba(255, 255, 255, 0.1);
       border-radius: 10px;
     }
+    /* Đảm bảo root chiếm toàn màn hình */
+    #root {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
   </style>
 <script type="importmap">
 {
@@ -51,5 +58,7 @@
 </head>
 <body>
   <div id="root"></div>
+  <!-- Entry point kích hoạt ứng dụng React -->
+  <script type="module" src="index.tsx"></script>
 </body>
 </html>
