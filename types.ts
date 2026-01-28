@@ -4,7 +4,7 @@ export type VisualizerType = 'bars' | 'circle' | 'wave';
 export type VisualizerTheme = 'default' | 'ocean' | 'fire' | 'neon';
 export type VisualEffect = 'none' | 'neon' | 'fluid';
 export type ThemeMode = 'light' | 'dark';
-export type ViewMode = 'player' | 'list';
+export type ViewMode = 'player' | 'explore';
 
 export interface LyricLine {
   time: number;
@@ -30,21 +30,11 @@ export interface Playlist {
   songIds: string[];
 }
 
-export interface Recommendation {
-  vibe: string;
-  description: string;
-  suggestedArtist: string;
-  suggestedGenre: string;
-  suggestedPlaylist?: { title: string; artist: string; type?: string }[];
-  remixSuggestions?: { title: string; version: string }[];
-}
-
-export interface DJSession {
+export interface ChartCategory {
   id: string;
-  name: string;
-  type: 'standard' | 'radio';
-  timestamp: number;
-  recommendation: Recommendation;
+  title: string;
+  color: string;
+  songs: Song[];
 }
 
 export interface PlayerState {
