@@ -100,12 +100,15 @@ const App: React.FC = () => {
   const handlePlayChartSong = (song: Song) => {
     const existingIndex = activeQueueIds.indexOf(song.id);
     if (existingIndex !== -1) {
+      // Nếu đã có trong queue, chuyển đến và phát
       setPlayerState(s => ({ ...s, currentSongIndex: existingIndex, isPlaying: true, currentTime: 0, viewMode: 'player' }));
     } else {
+      // Nếu chưa có, nạp vào đầu queue
       const newQueue = [song.id, ...activeQueueIds];
       setActiveQueueIds(newQueue);
       setPlayerState(s => ({ ...s, currentSongIndex: 0, isPlaying: true, currentTime: 0, viewMode: 'player' }));
     }
+    // Thu gọn sidebar trên mobile khi bắt đầu phát
     if (window.innerWidth < 1024) setShowLibrary(false);
   };
 
@@ -183,7 +186,11 @@ const App: React.FC = () => {
     audioRef.current.playbackRate = playerState.playbackSpeed;
     if (playerState.isPlaying) {
       initAudioContext();
-      audioRef.current.play().catch(() => setPlayerState(s => ({ ...s, isPlaying: false })));
+      // Kích hoạt phát nhạc và xử lý lỗi auto-play của trình duyệt
+      audioRef.current.play().catch(() => {
+        console.log("Auto-play prevented, waiting for interaction");
+        setPlayerState(s => ({ ...s, isPlaying: false }));
+      });
     } else audioRef.current.pause();
   }, [playerState.isPlaying, playerState.playbackSpeed, currentSong?.audioUrl, initAudioContext]);
 
@@ -328,7 +335,7 @@ const App: React.FC = () => {
         {showLibrary && <div onClick={() => setShowLibrary(false)} className="lg:hidden fixed inset-0 bg-black/60 z-50 backdrop-blur-sm"></div>}
 
         <main className="flex-1 overflow-y-auto scrollbar-hide flex flex-col items-center p-4 lg:p-10 relative">
-          <div className="w-full max-w-6xl flex flex-col items-center">
+          <div className="w-full max-w-6xl flex flex-col items-center h-full">
             {playerState.viewMode === 'explore' ? (
               <Charts 
                 categories={MOCK_CHARTS} 
